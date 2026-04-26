@@ -7,18 +7,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ContainerMetric extends Model
 {
-    // WAJIB DITAMBAHKAN AGAR LARAVEL TIDAK MENCARI KOLOM updated_at
+    protected $table = 'container_metrics';
+    
+    // Matikan fitur otomatis created_at & updated_at karena tabelmu tidak punya kolom itu
     public $timestamps = false; 
-
-    protected $fillable = [
-        'container_id', 'timestamp', 'cpu_usage_percent', 'num_cpus',
-        'mem_usage', 'mem_limit', 'mem_usage_percent', 'mem_cache', // <- PASTIKAN INI ADA
-        'net_rx_bytes', 'net_tx_bytes', 'blk_read_bytes', 'blk_write_bytes', 'pids'
-    ];
-
-    protected $casts = [
-        'timestamp' => 'datetime',
-    ];
+    
+    // INI DIA KUNCI JAWABANNYA: Izinkan Laravel mengisi semua kolom!
+    protected $guarded = []; 
 
     public function container(): BelongsTo
     {

@@ -1,0 +1,30 @@
+<?php
+
+namespace App\Services\Pollers;
+
+use App\Models\Device;
+use Illuminate\Support\Facades\Log;
+use Exception;
+
+class DevicePoller
+{
+    public static function handle(array $data): ?Device
+    {
+        try {
+            return Device::updateOrCreate(
+                ['ip' => config('monitoring.device_ip')],
+                [
+                    'hostname' => $data['system']['hostname'] ?? 'Unknown',
+                    'os' => $data['system']['platform'] ?? null,
+                    'hardware' => $data['cpu']['model'] ?? null,
+                    'uptime' => $data['system']['uptime']['seconds'] ?? 0,
+                    'status' => 1,
+                    'last_polled' => now(),
+                ]
+            );
+        } catch (Exception $e) {
+            Log::error("DevicePoller Error: " . $e->getMessage());
+            return null;
+        }
+    }
+}
