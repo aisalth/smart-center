@@ -9,7 +9,7 @@ const zakiClient = axios.create({
   },
 });
 
-// KLIEN BARU UNTUK DATABASE LARAVEL
+// KLIEN UNTUK DATABASE LARAVEL
 const laravelClient = axios.create({
   baseURL: 'http://127.0.0.1:8000/api', // Sesuaikan dengan port Laravel Anda
   timeout: 10000,
@@ -18,7 +18,6 @@ const laravelClient = axios.create({
   },
 });
 
-// Helper penangkap response standar Zaki { success, timestamp, data }
 const fetchZakiData = async (endpoint) => {
   try {
     const response = await zakiClient.get(endpoint);
@@ -38,7 +37,6 @@ export const getZakiNetwork       = () => fetchZakiData('/monitoring/network');
 export const getZakiProcesses     = () => fetchZakiData('/monitoring/processes');
 export const getZakiHistory       = () => fetchZakiData('/monitoring/history');
 
-// Khusus health check, strukturnya langsung me-return { status, uptime, timestamp }
 export const getZakiHealth = async () => {
   try {
     const response = await zakiClient.get('/monitoring/health');
@@ -49,13 +47,48 @@ export const getZakiHealth = async () => {
   }
 };
 
-// --- TAMBAHAN FITUR: Ambil History dari Laravel dengan Filter Waktu ---
+// --- API KE LARAVEL BACKEND ---
+
+// 1. History Container (CPU & RAM)
 export const getContainerHistory = async (containerName, minutes = 1440) => {
   try {
     const response = await laravelClient.get(`/monitoring/container-history/${containerName}?minutes=${minutes}`);
     return response.data.data;
   } catch (error) {
-    console.error(`Gagal mengambil histori container ${containerName} dari Laravel:`, error);
+    console.error(`Gagal mengambil histori container dari Laravel:`, error);
     return [];
+  }
+};
+
+// 2. Storage Device
+export const getDeviceStorage = async (deviceId) => {
+  try {
+    const response = await laravelClient.get(`/v1/devices/${deviceId}/storage`);
+    return response.data.data || [];
+  } catch (error) {
+    console.error(`Gagal mengambil storage device dari Laravel:`, error);
+    return [];
+  }
+};
+
+// 3. Network Traffic Port
+export const getPortTraffic = async (portId, minutes = 60) => {
+  try {
+    const response = await laravelClient.get(`/v1/ports/${portId}/traffic?minutes=${minutes}`);
+    return response.data.data || [];
+  } catch (error) {
+    console.error(`Gagal mengambil network traffic dari Laravel:`, error);
+    return [];
+  }
+};
+
+// 4. Detail Device (Untuk mendapatkan daftar Port/Interface)
+export const getDeviceDetail = async (deviceId) => {
+  try {
+    const response = await laravelClient.get(`/v1/devices/${deviceId}`);
+    return response.data.data || null;
+  } catch (error) {
+    console.error(`Gagal mengambil detail device dari Laravel:`, error);
+    return null;
   }
 };

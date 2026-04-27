@@ -7,6 +7,9 @@ import MainServer from './pages/MainServer';
 import Zaki from './pages/Zaki';
 import Server from './pages/Server';
 import ContainerDocker from './pages/ContainerDocker';
+import DeviceDetail from './pages/DeviceDetail';
+import AddDevice from './pages/AddMonitoringDevice';
+import DockerDetail from './pages/DockerDetail';
 import './index.css';
 
 function NotFound() {
@@ -27,9 +30,12 @@ export default function App() {
         <div className="main-content">
           <Routes>
             <Route path="/" element={<Aizar />} />
-            <Route path="/serverdocker" element={<Zaki />} />
+            {/* <Route path="/serverdocker" element={<Zaki />} /> */}
             <Route path="/server" element={<MainServer />} />
             <Route path="/docker" element={<ContainerDocker />} />
+            <Route path="/device/:id" element={<DeviceDetail   />} />
+            <Route path="/deviceDocker/:id" element={<DockerDetail   />} />
+            <Route path="/device/add" element={< AddDevice   />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </div>
@@ -37,4 +43,3 @@ export default function App() {
     </BrowserRouter>
   );
 }
-
