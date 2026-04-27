@@ -1,22 +1,28 @@
 <?php
-
-// use App\Console\Commands\PollDevices;
-// use App\Console\Commands\PruneMonitoringData;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
-use App\Models\DockerHost;
-use App\Jobs\PollDockerHostJob;
+use Illuminate\Support\Facades\Log;
+use App\Jobs\PollMonitoringApiJob;
 
-// Scheduler untuk Polling Docker Host setiap 1 menit
+Schedule::job(new PollMonitoringApiJob, 'monitoring')
+    ->everyMinute()
+    ->withoutOverlapping(2)
+    ->onFailure(function () {
+        Log::error('PollMonitoringApiJob failed in scheduler');
+    });
+
 Schedule::call(function () {
-    // Ambil hanya host yang aktif (disabled = 0)
-    $hosts = DockerHost::where('disabled', 0)->get();
-    
-    foreach ($hosts as $host) {
-        PollDockerHostJob::dispatch($host);
-    }
-})
-->everyMinute()
-->name('poll-docker-hosts') // <-- TAMBAHKAN INI DI SINI
-->withoutOverlapping();
-// Schedule::command(PollDevices::class)->everyMinute()->withoutOverlapping();
-// Schedule::command(PruneMonitoringData::class)->daily();
+    $deleted = DB::table('container_metrics')
+                 ->where('timestamp', '<', now()->subDays(30))
+                 ->delete();
+                 
+    Log::info("Membersihkan database: {$deleted} baris container_metrics lama dihapus.");
+})->dailyAt('02:00');
+
+Schedule::call(function () {
+    $deleted = DB::table('container_metrics')
+                 ->where('timestamp', '<', now()->subDays(30))
+                 ->delete();
+                 
+    \Log::info("Membersihkan database: {$deleted} baris container_metrics lama dihapus.");
+})->dailyAt('02:00');

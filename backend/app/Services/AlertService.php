@@ -5,16 +5,11 @@ namespace App\Services;
 use App\Models\Alert;
 use App\Models\AlertLog;
 use App\Models\Device;
-use Illuminate\Support\Facades\DB;
 
 class AlertService
 {
-    /**
-     * Evaluate hardcoded rules for a device after polling.
-     */
     public function evaluateDevice(Device $device): void
     {
-        // Rule 1: Device Down (status=false)
         $this->evaluateRule1($device);
 
         // Rule 2: CPU Warning

@@ -54,14 +54,11 @@ class DockerPoller
                         ]
                     );
 
-                    // Ambil data stats
                     $stats = $containerData['stats'] ?? [];
                     
-                    // Parse CPU & Mem Percent (Hilangkan tanda % dan ubah ke float)
                     $cpuPercent = isset($stats['cpu']) ? (float) str_replace('%', '', $stats['cpu']) : null;
                     $memPercent = isset($stats['memPercent']) ? (float) str_replace('%', '', $stats['memPercent']) : null;
 
-                    // Parse "4.641MiB / 512MiB" menjadi bytes terpisah
                     $memUsageBytes = null;
                     $memLimitBytes = null;
                     
@@ -73,7 +70,6 @@ class DockerPoller
                         }
                     }
 
-                    // Log untuk memastikan nilai metrik terbaca (cek di storage/logs/laravel.log)
                     Log::info("Menyimpan metrik untuk container: {$container->name}", [
                         'cpu_percent' => $cpuPercent,
                         'mem_percent' => $memPercent,
@@ -98,7 +94,6 @@ class DockerPoller
                             'mem_usage_percent' => $memPercent,
                             'mem_usage' => $memUsageBytes,
                             'mem_limit' => $memLimitBytes,
-                            // Paksa jadi 0 agar tidak NULL di database
                             'net_rx_bytes' => 0,
                             'net_tx_bytes' => 0,
                             'blk_read_bytes' => 0,
@@ -114,9 +109,6 @@ class DockerPoller
         }
     }
 
-    /**
-     * Helper untuk mengubah string "4.64MiB", "1.2GiB" menjadi angka Byte murni.
-     */
     private static function convertToBytes(string $memoryString): ?int
     {
         $memoryString = trim($memoryString);

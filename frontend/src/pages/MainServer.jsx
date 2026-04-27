@@ -2,17 +2,18 @@ import { useState, useEffect, useRef } from 'react';
 import Topbar from '../components/Topbar';
 import Badge from '../components/ui/Badge';
 import Card from '../components/ui/Card';
+import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { 
   getZakiDashboardData, getZakiHealth, getZakiNetwork, getZakiProcesses, 
   getZakiHistory 
 } from '../api/zakiApi';
 
-/* ── Helpers ─────────────────────────────────────────────── */
+import { getSnmpDevices, pollSnmpDevice, formatUptime } from '../api/snmpApi';
+
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 const fmtPct = (v) => `${parseFloat(v || 0).toFixed(1)}%`;
 
-/* ── Ring Gauge ──────────────────────────────────────────── */
 function RingGauge({ pct, label, color, size = 160, stroke = 12 }) {
   const radius = (size - stroke) / 2;
   const circ   = 2 * Math.PI * radius;
@@ -70,7 +71,17 @@ const HealthDot = ({ isOnline }) => (
   </span>
 );
 
-export default function Zaki() {
+export default function MainServer() {
+  const navigate = useNavigate();
+
+  const handleRowClick = (deviceId) => {
+    navigate(`/device/${deviceId}`);
+  };
+
+  const handleAddDevice = () => {
+    navigate('/device/add');
+  };
+
   const [sysData, setSysData]       = useState(null);
   const [cpuData, setCpuData]       = useState(null);
   const [memData, setMemData]       = useState(null);
@@ -88,6 +99,13 @@ export default function Zaki() {
   const [ramHist, setRamHist]   = useState([]);
   const [diskHist, setDiskHist] = useState([]);
 
+  // ══ SNMP DEVICE STATE ══
+  const [snmpDevices, setSnmpDevices]         = useState([]);
+  const [snmpMeta, setSnmpMeta]               = useState({ total: 0, online: 0, offline: 0 });
+  const [snmpLoading, setSnmpLoading]         = useState(true);
+  const [snmpError, setSnmpError]             = useState(false);
+  const [pollingDeviceId, setPollingDeviceId] = useState(null);
+
   const lastAlertTime = useRef(0);
 
   useEffect(() => {
@@ -96,6 +114,7 @@ export default function Zaki() {
     }
   }, []);
 
+  // ══ FETCH ZAKI API (existing) ══
   useEffect(() => {
     const fetchAllData = async () => {
       try {
@@ -124,7 +143,6 @@ export default function Zaki() {
           setNetwork(flatNetwork);
         }
 
-        // Sinkronisasi data history dari API History
         if (dataHistory && Array.isArray(dataHistory)) {
            const historyMap = dataHistory.slice(-30).map(h => ({
                t: new Date(h.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
@@ -173,6 +191,41 @@ export default function Zaki() {
     return () => clearInterval(interval);
   }, []);
 
+  // ══ FETCH SNMP DEVICES ══
+  const fetchSnmpDevices = async () => {
+    try {
+      setSnmpError(false);
+      const res = await getSnmpDevices();
+      setSnmpDevices(res.data || []);
+      setSnmpMeta(res.meta || { total: 0, online: 0, offline: 0 });
+    } catch (err) {
+      setSnmpError(true);
+    } finally {
+      setSnmpLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSnmpDevices();
+    // Refresh device list setiap 30 detik
+    const interval = setInterval(fetchSnmpDevices, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ══ POLL DEVICE HANDLER ══
+  const handlePollDevice = async (e, deviceId) => {
+    e.stopPropagation(); // Jangan trigger row click
+    setPollingDeviceId(deviceId);
+    try {
+      await pollSnmpDevice(deviceId);
+      await fetchSnmpDevices(); // Refresh list setelah poll
+    } catch (err) {
+      console.error('Poll failed:', err);
+    } finally {
+      setPollingDeviceId(null);
+    }
+  };
+
   if (isLoading && !sysData) {
     return (
       <>
@@ -205,7 +258,6 @@ export default function Zaki() {
       <Topbar title="SmartDeploy Monitoring Center" subtitle="Pantau kondisi CPU, RAM, Network, dan Container secara real-time" />
       <div className="page-content section-gap" style={{ maxWidth: '100%' }}>
 
-        {/* ... (Alert Messages Section tetap sama) ... */}
         {apiError && (
           <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius)', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
             <svg width="20" height="20" fill="none" stroke="#ef4444" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -222,39 +274,47 @@ export default function Zaki() {
           </div>
         )}
 
-        {/* ══ ROW 0 & ROW 1 (System Info & Gauges tetap sama) ══ */}
         <div className="grid-2" style={{ marginBottom: 20, alignItems: 'stretch' }}>
-           {/* System Information Card & Health Check Card */}
-           {/* ... (Copy paste dari kodemu sebelumnya) ... */}
            <Card 
-            title="System Information" 
-            subtitle="Info dasar server yang dimonitor" 
-            rightElement={<HealthDot isOnline={isOnline} />} 
-            delay="0.02s" 
-            style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
-          >
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', flex: 1 }}>
-              {[
-                { label: 'Hostname',  value: sysData?.system?.hostname ?? '—' },
-                { label: 'Platform',  value: sysData?.system?.platform ?? '—' },
-                { label: 'Arch',      value: sysData?.system?.arch     ?? '—' },
-                { label: 'CPU Cores', value: cpuData?.cores        ?? '—' },
-                { label: 'Uptime',    value: uptime },
-                { label: 'CPU Model', value: (cpuData?.model || '').split('@')[0].trim() || '—' },
-                { label: 'Load 1m',   value: loadAvg?.['1min']         ?? '—' },
-                { label: 'Load 5m',   value: loadAvg?.['5min']         ?? '—' },
-              ].map((r, i) => (
-                <div key={i} className="server-detail-row" style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e2e8f0', paddingBottom: 4 }}>
-                  <span className="server-detail-label" style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.label}</span>
-                  <span className="server-detail-value" style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 500 }}>{r.value}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-              Update terakhir: {lastFetch}
-            </div>
-          </Card>
+          title="System Information" 
+          subtitle="Info dasar server yang dimonitor" 
+          rightElement={<HealthDot isOnline={isOnline} />} 
+          delay="0.02s" 
+          style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+        >
+          <div style={{ flex: 1, overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <tbody>
+                {[
+                  { label: 'Hostname',  value: sysData?.system?.hostname ?? '—' },
+                  { label: 'Platform',  value: sysData?.system?.platform ?? '—' },
+                  { label: 'Arch',      value: sysData?.system?.arch     ?? '—' },
+                  { label: 'CPU Cores', value: cpuData?.cores            ?? '—' },
+                  { label: 'Uptime',    value: uptime },
+                  { label: 'CPU Model', value: (cpuData?.model || '').split('@')[0].trim() || '—' },
+                  { label: 'Load 1m',   value: loadAvg?.['1min']         ?? '—' },
+                  { label: 'Load 5m',   value: loadAvg?.['5min']         ?? '—' },
+                ].map((r, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '8px 0', fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
+                      {r.label}
+                    </td>
+                    <td style={{ padding: '8px 0', textAlign: 'right', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 600, color: 'var(--foreground)' }}>
+                      {r.value}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          
+          <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid var(--card-border)', paddingTop: 10 }}>
+            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            Update terakhir: {lastFetch}
+          </div>
+        </Card>
 
           <Card 
             title="Health Check" 
@@ -263,7 +323,7 @@ export default function Zaki() {
             delay="0.06s" 
             style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
           >
-            <div style={{ textAlign: 'center', padding: '18px 0', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <div style={{ textAlign: 'center', padding: '40px 0 40px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <div style={{ width: 80, height: 80, borderRadius: '50%', margin: '0 auto 12px', background: isOnline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `2px solid ${isOnline ? '#22c55e' : '#ef4444'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {isOnline
                   ? <svg width="36" height="36" fill="none" stroke="#22c55e" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
@@ -292,10 +352,7 @@ export default function Zaki() {
           </Card>
         </div>
 
-        {/* Gauges Row */}
         <div className="grid-3" style={{ alignItems: 'stretch' }}>
-           {/* CPU, RAM, DISK Cards */}
-           {/* ... (Copy paste dari kodemu sebelumnya) ... */}
            <Card 
             title="CPU Usage" 
             subtitle={`${cpuData?.cores ?? '—'} Cores Active`} 
@@ -393,7 +450,6 @@ export default function Zaki() {
           </Card>
         </div>
 
-        {/* ══ NEW SECTION: RAM UTILIZATION GRAPH ══ */}
         <Card 
           title="RAM Utilization History" 
           subtitle="Tren penggunaan memori dalam beberapa menit terakhir" 
@@ -410,41 +466,15 @@ export default function Zaki() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--card-border)" />
-                <XAxis 
-                  dataKey="t" 
-                  fontSize={10} 
-                  tickLine={false} 
-                  axisLine={false} 
-                  tick={{fill: 'var(--text-muted)'}}
-                />
-                <YAxis 
-                  fontSize={10} 
-                  tickLine={false} 
-                  axisLine={false} 
-                  domain={[0, 100]}
-                  tickFormatter={(val) => `${val}%`}
-                  tick={{fill: 'var(--text-muted)'}}
-                />
-                <Tooltip 
-                  contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 }}
-                  itemStyle={{ color: '#22c55e', fontWeight: 'bold' }}
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="val" 
-                  name="RAM Usage"
-                  stroke="#22c55e" 
-                  fillOpacity={1} 
-                  fill="url(#colorRam)" 
-                  strokeWidth={2}
-                  isAnimationActive={true}
-                />
+                <XAxis dataKey="t" fontSize={10} tickLine={false} axisLine={false} tick={{fill: 'var(--text-muted)'}} />
+                <YAxis fontSize={10} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={(val) => `${val}%`} tick={{fill: 'var(--text-muted)'}} />
+                <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, fontSize: 12 }} itemStyle={{ color: '#22c55e', fontWeight: 'bold' }} />
+                <Area type="monotone" dataKey="val" name="RAM Usage" stroke="#22c55e" fillOpacity={1} fill="url(#colorRam)" strokeWidth={2} isAnimationActive={true} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
-        {/* ══ Network & Processes Table (Tetap sama) ══ */}
         <Card 
           title="Network Interfaces" 
           subtitle="Daftar koneksi & IP aktif" 
@@ -452,7 +482,6 @@ export default function Zaki() {
           delay="0.3s" 
           style={{ marginTop: 20 }}
         >
-          {/* ... (Tabel Network) ... */}
           <div style={{ marginTop: 10, overflowX: 'auto', maxHeight: 300, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
               <thead>
@@ -490,7 +519,6 @@ export default function Zaki() {
           delay="0.40s" 
           style={{ marginTop: 20 }}
         >
-          {/* ... (Tabel Processes) ... */}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 700 }}>
               <thead>
@@ -505,7 +533,6 @@ export default function Zaki() {
                   const cpuPct = parseFloat(p.cpu ?? 0);
                   const memPct = parseFloat(p.mem ?? 0);
                   const shortName = p.command.split(' ')[0].split('/').pop();
-
                   return (
                     <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s' }}
                       onMouseEnter={e => e.currentTarget.style.background = 'rgba(64,114,175,0.04)'}
@@ -523,9 +550,7 @@ export default function Zaki() {
                           <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 700, color: cpuPct > 50 ? '#ef4444' : cpuPct > 20 ? '#f59e0b' : 'var(--foreground)', minWidth: 40 }}>{cpuPct.toFixed(1)}%</span>
                         </div>
                       </td>
-                      <td style={{ padding: '10px 12px', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: memPct > 10 ? '#f59e0b' : 'var(--foreground)' }}>
-                        {p.mem}%
-                      </td>
+                      <td style={{ padding: '10px 12px', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: memPct > 10 ? '#f59e0b' : 'var(--foreground)' }}>{p.mem}%</td>
                       <td style={{ padding: '10px 12px' }}>
                         <span style={{ fontSize: 11, fontWeight: 600, color: p.stat.includes('R') ? '#22c55e' : 'var(--text-muted)' }}>{p.stat}</span>
                       </td>
@@ -536,6 +561,159 @@ export default function Zaki() {
               </tbody>
             </table>
           </div>
+        </Card>
+
+        {/* ══ MONITORED DEVICES — SNMP INTEGRATED ══ */}
+        <Card 
+          title="Monitored Devices" 
+          subtitle={`${snmpMeta.online} online · ${snmpMeta.offline} offline · ${snmpMeta.total} total`}
+          delay="0.45s" 
+          style={{ marginTop: 20 }}
+          rightElement={
+            <div style={{ display: 'flex', gap: 8 }}>
+              {/* Refresh Button */}
+              <button 
+                onClick={fetchSnmpDevices}
+                style={{ background: 'transparent', border: '1px solid var(--card-border)', color: 'var(--text-muted)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}
+                title="Refresh device list"
+              >
+                ↻
+              </button>
+              {/* Add Device Button */}
+              <button 
+                onClick={handleAddDevice}
+                style={{ background: '#3b82f6', color: '#ffffff', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', transition: 'background 0.2s' }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#2563eb'}
+                onMouseLeave={(e) => e.currentTarget.style.background = '#3b82f6'}
+              >
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Add Device
+              </button>
+            </div>
+          }
+        >
+          {/* Error State */}
+          {snmpError && (
+            <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 16px', marginBottom: 12, fontSize: 13, color: '#ef4444' }}>
+              ⚠ Gagal memuat daftar device SNMP. Pastikan backend Laravel berjalan.
+            </div>
+          )}
+
+          {/* Loading State */}
+          {snmpLoading ? (
+            <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+              <div style={{ width: 24, height: 24, border: '2px solid #f1f5f9', borderTop: '2px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 10px' }} />
+              Memuat device...
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 700 }}>
+                <thead>
+                  <tr>
+                    {['STATUS', 'NAMA HOST', 'IP ADDRESS', 'CPU', 'MEMORY', 'DISK', 'UPTIME', 'LAST POLLED', 'AKSI'].map(h => (
+                      <th key={h} style={{ padding: '10px 12px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textAlign: 'left', borderBottom: '1px solid var(--card-border)', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {snmpDevices.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={{ padding: '30px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                        Belum ada device.{' '}
+                        <span style={{ color: '#3b82f6', cursor: 'pointer' }} onClick={handleAddDevice}>Tambah sekarang →</span>
+                      </td>
+                    </tr>
+                  ) : snmpDevices.map((dev) => (
+                    <tr 
+                      key={dev.device_id}
+                      onClick={() => handleRowClick(dev.device_id)}
+                      style={{ borderBottom: '1px solid #f1f5f9', cursor: 'pointer', transition: 'background 0.15s' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(64,114,175,0.06)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      {/* Status */}
+                      <td style={{ padding: '12px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: dev.status ? '#22c55e' : '#ef4444' }}>
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: dev.status ? '#22c55e' : '#ef4444', boxShadow: dev.status ? '0 0 5px #22c55e' : 'none' }} />
+                          {dev.status ? 'Online' : 'Offline'}
+                        </span>
+                      </td>
+
+                      {/* Hostname */}
+                      <td style={{ padding: '12px', fontWeight: 600, color: '#3b82f6' }}>
+                        {dev.hostname}
+                        {dev.sysName && dev.sysName !== dev.hostname && (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>{dev.sysName}</div>
+                        )}
+                      </td>
+
+                      {/* IP */}
+                      <td style={{ padding: '12px', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: 'var(--text-muted)' }}>
+                        {dev.ip}
+                      </td>
+
+                      {/* CPU */}
+                      <td style={{ padding: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ width: 50, height: 4, background: '#f1f5f9', borderRadius: 2 }}>
+                            <div style={{ height: '100%', width: `${dev.cpu_usage ?? 0}%`, background: dev.cpu_usage > 80 ? '#ef4444' : dev.cpu_usage > 60 ? '#f59e0b' : '#3b82f6', borderRadius: 2 }} />
+                          </div>
+                          <span style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace' }}>{dev.cpu_usage ?? 0}%</span>
+                        </div>
+                      </td>
+
+                      {/* Memory */}
+                      <td style={{ padding: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ width: 50, height: 4, background: '#f1f5f9', borderRadius: 2 }}>
+                            <div style={{ height: '100%', width: `${dev.memory_percent ?? 0}%`, background: dev.memory_percent > 80 ? '#ef4444' : dev.memory_percent > 60 ? '#f59e0b' : '#22c55e', borderRadius: 2 }} />
+                          </div>
+                          <span style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace' }}>{dev.memory_percent ?? 0}%</span>
+                        </div>
+                      </td>
+
+                      {/* Disk */}
+                      <td style={{ padding: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ width: 50, height: 4, background: '#f1f5f9', borderRadius: 2 }}>
+                            <div style={{ height: '100%', width: `${dev.disk_percent ?? 0}%`, background: dev.disk_percent > 80 ? '#ef4444' : dev.disk_percent > 60 ? '#f59e0b' : '#f59e0b', borderRadius: 2 }} />
+                          </div>
+                          <span style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace' }}>{dev.disk_percent ?? 0}%</span>
+                        </div>
+                      </td>
+
+                      {/* Uptime */}
+                      <td style={{ padding: '12px', fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'var(--text-muted)' }}>
+                        {formatUptime(dev.uptime)}
+                      </td>
+
+                      {/* Last Polled */}
+                      <td style={{ padding: '12px', fontSize: 11, color: 'var(--text-muted)' }}>
+                        {dev.last_polled ? new Date(dev.last_polled).toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }) : '—'}
+                      </td>
+
+                      {/* Aksi */}
+                      <td style={{ padding: '12px' }} onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={(e) => handlePollDevice(e, dev.device_id)}
+                          disabled={pollingDeviceId === dev.device_id}
+                          style={{ background: 'transparent', border: '1px solid var(--card-border)', color: 'var(--text-muted)', padding: '4px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer', transition: 'all 0.2s' }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.color = '#3b82f6'; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                          title="Poll sekarang"
+                        >
+                          {pollingDeviceId === dev.device_id ? '...' : '↻ Poll'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
 
       </div>

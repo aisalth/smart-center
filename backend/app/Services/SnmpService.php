@@ -3,341 +3,240 @@
 namespace App\Services;
 
 use App\Models\Device;
+use App\Models\Port;
+use App\Models\PortTraffic;
+use App\Models\Processor;
+use App\Models\Storage;
 use Illuminate\Support\Facades\Log;
 
 class SnmpService
 {
-    protected int $timeout = 3; // seconds
-    protected int $retries = 1;
+    private int $timeout = 2000000;
+    private int $retries = 1;
 
-    /**
-     * Ping an IP address and return alive status with latency.
-     */
-    public function ping(string $ip): array
-    {
-        $alive = false;
-        $latency = null;
-
-        // Use exec with system ping (Linux/macOS compatible)
-        $cmd = sprintf('ping -c 1 -W 1 %s 2>&1', escapeshellarg($ip));
-        exec($cmd, $output, $returnVar);
-
-        if ($returnVar === 0) {
-            $alive = true;
-            // Extract time from output like "time=0.123 ms"
-            foreach ($output as $line) {
-                if (preg_match('/time[=<](\d+(\.\d+)?)\s*ms/', $line, $matches)) {
-                    $latency = (float) $matches[1];
-                    break;
-                }
-            }
-        }
-
-        // Fallback: socket connection to 161 if ping fails (optional)
-        if (!$alive) {
-            $start = microtime(true);
-            $socket = @fsockopen($ip, 161, $errno, $errstr, 1);
-            if ($socket) {
-                $alive = true;
-                $latency = (microtime(true) - $start) * 1000;
-                fclose($socket);
-            }
-        }
-
-        return ['alive' => $alive, 'latency_ms' => $latency];
-    }
-
-    /**
-     * Get a single OID value.
-     */
-    public function get(Device $device, string $oid): mixed
+    public function testConnection(Device $device): bool
     {
         try {
-            $session = $this->createSnmpSession($device);
-            $value = snmpget($session, $oid);
-            $this->closeSession($session);
-            return $value !== false ? $value : null;
+            $result = @snmpget($device->ip, $device->community, '.1.3.6.1.2.1.1.3.0', $this->timeout, $this->retries);
+            return $result !== false;
         } catch (\Exception $e) {
-            Log::channel('snmp')->error("SNMP get failed for device {$device->hostname}, OID $oid", [
-                'error' => $e->getMessage()
-            ]);
+            return false;
+        }
+    }
+
+    public function getUptime(Device $device): ?int
+    {
+        try {
+            $raw = @snmpget($device->ip, $device->community, '.1.3.6.1.2.1.1.3.0', $this->timeout, $this->retries);
+            if (!$raw) return null;
+            preg_match('/\((\d+)\)/', $raw, $matches);
+            return isset($matches[1]) ? (int)($matches[1] / 100) : null;
+        } catch (\Exception $e) {
             return null;
         }
     }
 
-    /**
-     * Walk a subtree OID.
-     */
-    public function walk(Device $device, string $oid): array
+    public function getSysInfo(Device $device): array
     {
-        try {
-            $session = $this->createSnmpSession($device);
-            $result = snmpwalk($session, $oid);
-            $this->closeSession($session);
-            return $result !== false ? $result : [];
-        } catch (\Exception $e) {
-            Log::channel('snmp')->error("SNMP walk failed for device {$device->hostname}, OID $oid", [
-                'error' => $e->getMessage()
-            ]);
-            return [];
-        }
-    }
-
-    /**
-     * Get system information OIDs.
-     */
-    public function getSystemInfo(Device $device): array
-    {
-        $oids = [
-            'sysDescr'    => '.1.3.6.1.2.1.1.1.0',
-            'sysName'     => '.1.3.6.1.2.1.1.5.0',
-            'sysObjectID' => '.1.3.6.1.2.1.1.2.0',
-            'sysUpTime'   => '.1.3.6.1.2.1.1.3.0',
-            'sysContact'  => '.1.3.6.1.2.1.1.4.0',
-        ];
-
         $info = [];
-        foreach ($oids as $key => $oid) {
-            $val = $this->get($device, $oid);
-            $info[$key] = $val !== null ? trim((string) $val) : null;
+        try {
+            $oids = [
+                'sysDescr' => '.1.3.6.1.2.1.1.1.0',
+                'sysName'  => '.1.3.6.1.2.1.1.5.0',
+            ];
+            foreach ($oids as $key => $oid) {
+                $raw = @snmpget($device->ip, $device->community, $oid, $this->timeout, $this->retries);
+                if ($raw !== false) {
+                    $info[$key] = $this->parseSnmpValue($raw);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning("SNMP getSysInfo failed for {$device->hostname}: " . $e->getMessage());
         }
-
-        // Convert uptime from hundredths of seconds to seconds
-        if (isset($info['sysUpTime']) && is_numeric($info['sysUpTime'])) {
-            $info['sysUpTime_seconds'] = (int) ($info['sysUpTime'] / 100);
-        } else {
-            $info['sysUpTime_seconds'] = null;
-        }
-
         return $info;
     }
 
-    /**
-     * Get CPU usage percentage (integer).
-     */
-    public function getCpuUsage(Device $device): ?int
-    {
-        // Try UCD-SNMP-MIB idle percentage
-        $idleOid = '.1.3.6.1.4.1.2021.11.11.0';
-        $idle = $this->get($device, $idleOid);
-        if (is_numeric($idle)) {
-            return 100 - (int) $idle;
-        }
+    public function pollCpu(Device $device): void
+{
+    try {
+        // Ambil CPU idle, lalu hitung usage = 100 - idle
+        $idleRaw = @snmpget($device->ip, $device->community, '.1.3.6.1.4.1.2021.11.11.0', $this->timeout, $this->retries);
+        $userRaw = @snmpget($device->ip, $device->community, '.1.3.6.1.4.1.2021.11.9.0', $this->timeout, $this->retries);
+        $sysRaw  = @snmpget($device->ip, $device->community, '.1.3.6.1.4.1.2021.11.10.0', $this->timeout, $this->retries);
 
-        // Fallback: HOST-RESOURCES-MIB hrProcessorLoad (1.3.6.1.2.1.25.3.3.1.2)
-        $hrLoad = $this->walk($device, '.1.3.6.1.2.1.25.3.3.1.2');
-        if (!empty($hrLoad)) {
-            // Take average of all processor loads if multiple CPUs
-            $sum = 0;
-            $count = 0;
-            foreach ($hrLoad as $val) {
-                if (is_numeric($val)) {
-                    $sum += (int) $val;
-                    $count++;
-                }
-            }
-            return $count > 0 ? (int) round($sum / $count) : null;
-        }
+        if ($idleRaw === false) return;
 
-        return null;
+        $idle  = (int) $this->parseSnmpValue($idleRaw);
+        $user  = $userRaw !== false ? (int) $this->parseSnmpValue($userRaw) : 0;
+        $sys   = $sysRaw  !== false ? (int) $this->parseSnmpValue($sysRaw)  : 0;
+        $usage = max(0, min(100, 100 - $idle));
+
+        Processor::updateOrCreate(
+            [
+                'device_id'       => $device->device_id,
+                'processor_index' => '1',
+            ],
+            [
+                'processor_type'  => 'cpu',
+                'processor_descr' => 'CPU',
+                'processor_usage' => $usage,
+            ]
+        );
+    } catch (\Exception $e) {
+        Log::warning("SNMP pollCpu failed for {$device->hostname}: " . $e->getMessage());
+    }
     }
 
-    /**
-     * Get memory information: total, used, free, percentage.
-     */
-    public function getMemoryInfo(Device $device): ?array
+    public function pollStorage(Device $device): void
     {
-        $memTotalReal = $this->get($device, '.1.3.6.1.4.1.2021.4.5.0');  // memTotalReal (KB)
-        $memAvailReal = $this->get($device, '.1.3.6.1.4.1.2021.4.6.0');  // memAvailReal (KB)
-        $memTotalFree = $this->get($device, '.1.3.6.1.4.1.2021.4.11.0'); // memTotalFree (KB)
-
-        if (!is_numeric($memTotalReal) || !is_numeric($memAvailReal) || !is_numeric($memTotalFree)) {
-            return null;
-        }
-
-        $total = (int) $memTotalReal * 1024; // convert to bytes
-        $free = (int) $memTotalFree * 1024;
-        $used = $total - $free;
-        $perc = $total > 0 ? (int) round(($used / $total) * 100) : 0;
-
-        return [
-            'total' => $total,
-            'used'  => $used,
-            'free'  => $free,
-            'perc'  => $perc,
-        ];
-    }
-
-    /**
-     * Get disk information from hrStorageTable.
-     */
-    public function getDiskInfo(Device $device): array
-    {
-        $disks = [];
         try {
-            $session = $this->createSnmpSession($device);
+            $storageDescr = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.25.2.3.1.3', $this->timeout, $this->retries);
+            $storageSize  = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.25.2.3.1.5', $this->timeout, $this->retries);
+            $storageUsed  = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.25.2.3.1.6', $this->timeout, $this->retries);
+            $storageUnit  = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.25.2.3.1.4', $this->timeout, $this->retries);
 
-            // Walk hrStorageType to filter fixed disks
-            $storageTypes = snmpwalk($session, '.1.3.6.1.2.1.25.2.3.1.2');
-            if ($storageTypes === false) {
-                $this->closeSession($session);
-                return [];
+            if (!$storageDescr || !$storageSize || !$storageUsed) return;
+
+            foreach ($storageDescr as $i => $descrRaw) {
+                $descr = $this->parseSnmpValue($descrRaw);
+                $descrLower = strtolower($descr);
+
+                // Tentukan tipe: memory atau disk
+                $isMemory = in_array($descrLower, ['physical memory', 'virtual memory', 'swap space']);
+                $isDisk   = str_starts_with($descr, '/') && !in_array($descr, ['/run', '/dev/shm', '/run/lock']) && !str_starts_with($descr, '/run/');
+
+                if (!$isMemory && !$isDisk) continue;
+
+                $unit  = isset($storageUnit[$i]) ? (int) $this->parseSnmpValue($storageUnit[$i]) : 1;
+                $size  = isset($storageSize[$i]) ? (int) $this->parseSnmpValue($storageSize[$i]) * $unit : 0;
+                $used  = isset($storageUsed[$i]) ? (int) $this->parseSnmpValue($storageUsed[$i]) * $unit : 0;
+                $free  = max(0, $size - $used);
+                $perc  = $size > 0 ? (int) round(($used / $size) * 100) : 0;
+                $type  = $isMemory ? 'memory' : 'disk';
+                $index = (string) ($i + 1);
+
+                Storage::updateOrCreate(
+                    [
+                        'device_id'     => $device->device_id,
+                        'type'          => $type,
+                        'storage_index' => $index,
+                    ],
+                    [
+                        'storage_descr' => $descr,
+                        'storage_size'  => $size,
+                        'storage_used'  => $used,
+                        'storage_free'  => $free,
+                        'storage_perc'  => $perc,
+                    ]
+                );
             }
-
-            // hrStorageFixedDisk OID: .1.3.6.1.2.1.25.2.1.4
-            $fixedDiskOid = '.1.3.6.1.2.1.25.2.1.4';
-            $diskIndexes = [];
-            foreach ($storageTypes as $fullOid => $type) {
-                if (trim($type) === $fixedDiskOid) {
-                    // Extract index from OID
-                    preg_match('/\.(\d+)$/', $fullOid, $matches);
-                    if (isset($matches[1])) {
-                        $diskIndexes[] = $matches[1];
-                    }
-                }
-            }
-
-            if (empty($diskIndexes)) {
-                $this->closeSession($session);
-                return [];
-            }
-
-            // Prepare data
-            foreach ($diskIndexes as $index) {
-                $descr = snmpget($session, ".1.3.6.1.2.1.25.2.3.1.3.$index");
-                $allocUnits = snmpget($session, ".1.3.6.1.2.1.25.2.3.1.4.$index");
-                $size = snmpget($session, ".1.3.6.1.2.1.25.2.3.1.5.$index");
-                $used = snmpget($session, ".1.3.6.1.2.1.25.2.3.1.6.$index");
-
-                if ($descr === false || $size === false || $used === false || $allocUnits === false) {
-                    continue;
-                }
-
-                $allocUnits = (int) $allocUnits;
-                $sizeBytes = (int) $size * $allocUnits;
-                $usedBytes = (int) $used * $allocUnits;
-                $freeBytes = $sizeBytes - $usedBytes;
-                $perc = $sizeBytes > 0 ? (int) round(($usedBytes / $sizeBytes) * 100) : 0;
-
-                $disks[] = [
-                    'index'      => $index,
-                    'descr'      => trim((string) $descr),
-                    'size_bytes' => $sizeBytes,
-                    'used_bytes' => $usedBytes,
-                    'free_bytes' => $freeBytes,
-                    'perc'       => $perc,
-                ];
-            }
-
-            $this->closeSession($session);
         } catch (\Exception $e) {
-            Log::channel('snmp')->error("Failed to get disk info for device {$device->hostname}", [
-                'error' => $e->getMessage()
-            ]);
+            Log::warning("SNMP pollStorage failed for {$device->hostname}: " . $e->getMessage());
         }
-
-        return $disks;
     }
 
-    /**
-     * Get network interfaces from ifTable.
-     */
-    public function getInterfaces(Device $device): array
+    public function pollPorts(Device $device): void
     {
-        $interfaces = [];
         try {
-            $session = $this->createSnmpSession($device);
-            $ifIndexes = snmpwalk($session, '.1.3.6.1.2.1.2.2.1.1');
-            if ($ifIndexes === false) {
-                $this->closeSession($session);
-                return [];
+            $ifIndex     = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.1', $this->timeout, $this->retries);
+            $ifDescr     = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.2', $this->timeout, $this->retries);
+            $ifType      = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.3', $this->timeout, $this->retries);
+            $ifSpeed     = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.5', $this->timeout, $this->retries);
+            $ifAdminStat = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.7', $this->timeout, $this->retries);
+            $ifOperStat  = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.8', $this->timeout, $this->retries);
+            $ifInOctets  = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.10', $this->timeout, $this->retries);
+            $ifOutOctets = @snmpwalk($device->ip, $device->community, '.1.3.6.1.2.1.2.2.1.16', $this->timeout, $this->retries);
+
+            if (!$ifIndex) return;
+
+            foreach ($ifIndex as $i => $idxRaw) {
+                $idx = (int) $this->parseSnmpValue($idxRaw);
+
+                $port = Port::updateOrCreate(
+                    ['device_id' => $device->device_id, 'ifIndex' => $idx],
+                    [
+                        'ifDescr'       => isset($ifDescr[$i])     ? $this->parseSnmpValue($ifDescr[$i]) : null,
+                        'ifName'        => isset($ifDescr[$i])     ? $this->parseSnmpValue($ifDescr[$i]) : null,
+                        'ifType'        => isset($ifType[$i])      ? $this->parseSnmpValue($ifType[$i]) : null,
+                        'ifSpeed'       => isset($ifSpeed[$i])     ? (int) $this->parseSnmpValue($ifSpeed[$i]) : null,
+                        'ifAdminStatus' => isset($ifAdminStat[$i]) ? ($this->parseSnmpValue($ifAdminStat[$i]) == '1' ? 'up' : 'down') : null,
+                        'ifOperStatus'  => isset($ifOperStat[$i])  ? ($this->parseSnmpValue($ifOperStat[$i]) == '1' ? 'up' : 'down') : null,
+                    ]
+                );
+
+                $inOctets  = isset($ifInOctets[$i])  ? (int) $this->parseSnmpValue($ifInOctets[$i]) : 0;
+                $outOctets = isset($ifOutOctets[$i]) ? (int) $this->parseSnmpValue($ifOutOctets[$i]) : 0;
+
+                $last    = PortTraffic::where('port_id', $port->port_id)->latest('timestamp')->first();
+                $inRate  = null;
+                $outRate = null;
+
+                if ($last) {
+                    $seconds = max(1, now()->diffInSeconds($last->timestamp));
+                    $inRate  = max(0, (int)(($inOctets - $last->in_octets) / $seconds));
+                    $outRate = max(0, (int)(($outOctets - $last->out_octets) / $seconds));
+                }
+
+                PortTraffic::create([
+                    'port_id'    => $port->port_id,
+                    'timestamp'  => now(),
+                    'in_octets'  => $inOctets,
+                    'out_octets' => $outOctets,
+                    'in_rate'    => $inRate,
+                    'out_rate'   => $outRate,
+                ]);
             }
-
-            foreach ($ifIndexes as $fullOid => $index) {
-                $index = (int) $index;
-                $descr = snmpget($session, ".1.3.6.1.2.1.2.2.1.2.$index");
-                $type = snmpget($session, ".1.3.6.1.2.1.2.2.1.3.$index");
-                $speed = snmpget($session, ".1.3.6.1.2.1.2.2.1.5.$index");
-                $adminStatus = snmpget($session, ".1.3.6.1.2.1.2.2.1.7.$index");
-                $operStatus = snmpget($session, ".1.3.6.1.2.1.2.2.1.8.$index");
-
-                $interfaces[] = [
-                    'ifIndex'       => $index,
-                    'ifName'        => trim((string) $descr),
-                    'ifDescr'       => trim((string) $descr),
-                    'ifType'        => (int) $type,
-                    'ifSpeed'       => is_numeric($speed) ? (int) $speed : 0,
-                    'ifAdminStatus' => trim((string) $adminStatus),
-                    'ifOperStatus'  => trim((string) $operStatus),
-                ];
-            }
-
-            $this->closeSession($session);
         } catch (\Exception $e) {
-            Log::channel('snmp')->error("Failed to get interfaces for device {$device->hostname}", [
-                'error' => $e->getMessage()
-            ]);
+            Log::warning("SNMP pollPorts failed for {$device->hostname}: " . $e->getMessage());
+        }
+    }
+
+    public function pollDevice(Device $device): bool
+    {
+        if (!$this->testConnection($device)) {
+            $device->update(['status' => 0, 'status_reason' => 'snmp']);
+            return false;
         }
 
-        return $interfaces;
+        $uptime  = $this->getUptime($device);
+        $sysInfo = $this->getSysInfo($device);
+
+        $device->update([
+            'status'        => 1,
+            'status_reason' => '',
+            'uptime'        => $uptime,
+            'last_polled'   => now(),
+            'sysDescr'      => $sysInfo['sysDescr'] ?? $device->sysDescr,
+            'sysName'       => $sysInfo['sysName']  ?? $device->sysName,
+        ]);
+
+        $this->pollCpu($device);
+        $this->pollStorage($device);
+        $this->pollPorts($device);
+
+        return true;
     }
 
     /**
-     * Get interface counters (in/out octets).
+     * Parse nilai mentah SNMP, hapus prefix type dan tanda kutip
+     * Contoh:
+     *   STRING: "value"   → value
+     *   INTEGER: 42       → 42
+     *   "0.00"            → 0.00
+     *   Gauge32: 1000     → 1000
      */
-    public function getInterfaceCounters(Device $device, int $ifIndex): ?array
+    private function parseSnmpValue(string $raw): string
     {
-        $inOid = ".1.3.6.1.2.1.2.2.1.10.$ifIndex";
-        $outOid = ".1.3.6.1.2.1.2.2.1.16.$ifIndex";
+        $raw = trim($raw);
 
-        $in = $this->get($device, $inOid);
-        $out = $this->get($device, $outOid);
-
-        if (!is_numeric($in) || !is_numeric($out)) {
-            return null;
+        // Ada prefix type seperti "STRING: ..." atau "INTEGER: ..."
+        if (preg_match('/^[A-Za-z0-9\-]+:\s*(.+)$/', $raw, $matches)) {
+            $raw = trim($matches[1]);
         }
 
-        return [
-            'in_octets'  => (int) $in,
-            'out_octets' => (int) $out,
-        ];
-    }
+        // Hapus tanda kutip di awal/akhir
+        $raw = trim($raw, '"');
 
-    /**
-     * Create SNMP session based on device credentials.
-     */
-    protected function createSnmpSession(Device $device)
-    {
-        $version = $device->snmpver === 'v3' ? SNMP_VERSION_3 : ($device->snmpver === 'v2c' ? SNMP_VERSION_2c : SNMP_VERSION_1);
-        $port = $device->port ?: 161;
-        $transport = $device->transport ?: 'udp';
-
-        // Build SNMP session string
-        $host = "{$transport}:{$device->ip}:{$port}";
-
-        // For now v3 is stub, just use v2c
-        if ($version === SNMP_VERSION_3) {
-            // Not implemented, fallback to v2c
-            $version = SNMP_VERSION_2c;
-        }
-
-        $session = snmp_init($host, $device->community, $this->timeout, $this->retries, $version);
-        if (!$session) {
-            throw new \Exception("Failed to initialize SNMP session for {$device->hostname}");
-        }
-
-        // Set quick print for numeric output
-        snmp_set_quick_print(1);
-        snmp_set_enum_print(0);
-        snmp_set_oid_output_format(SNMP_OID_OUTPUT_NUMERIC);
-
-        return $session;
-    }
-
-    protected function closeSession($session): void
-    {
-        if ($session) {
-            snmp_close($session);
-        }
+        return $raw;
     }
 }

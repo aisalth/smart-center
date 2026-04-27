@@ -48,6 +48,7 @@ export default function ContainerDocker() {
   // --- STATE TAMBAHAN UNTUK FITUR DATABASE HISTORY ---
   const [historyData, setHistoryData] = useState([]);
   const [selectedContainer, setSelectedContainer] = useState(null);
+  const [timeFilter, setTimeFilter] = useState(1440); // Filter default 24 Jam
 
   useEffect(() => {
     const loadData = async () => {
@@ -74,7 +75,9 @@ export default function ContainerDocker() {
         }
 
         if (targetName) {
-          const history = await getContainerHistory(targetName);
+          // Menambahkan parameter timeFilter ke API
+          const history = await getContainerHistory(targetName, timeFilter);
+          
           // Format waktu agar cantik di grafik Recharts
           const formattedHistory = history.map(h => ({
             time: new Date(h.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
@@ -95,7 +98,7 @@ export default function ContainerDocker() {
     loadData();
     const interval = setInterval(loadData, 5000); 
     return () => clearInterval(interval);
-  }, [selectedContainer]); // Akan refresh otomatis saat container yang dipilih berubah
+  }, [selectedContainer, timeFilter]); // Dependency diupdate agar merespon saat filter diubah
 
   if (isLoading && !data) {
     return (
@@ -188,7 +191,6 @@ export default function ContainerDocker() {
                   <th style={{ padding: '12px 8px' }}>RAM Usage</th>
                   <th style={{ padding: '12px 8px' }}>Net I/O (Rx/Tx)</th>
                   <th style={{ padding: '12px 8px' }}>Block I/O</th>
-                  {/* TAMBAHAN 1 KOLOM UNTUK TOMBOL HISTORY */}
                   <th style={{ padding: '12px 8px', textAlign: 'center' }}>History</th>
                 </tr>
               </thead>
@@ -247,7 +249,6 @@ export default function ContainerDocker() {
                           {isSelected ? 'Viewing' : 'View'}
                         </button>
                       </td>
-
                     </tr>
                   );
                 }) : (
@@ -260,12 +261,36 @@ export default function ContainerDocker() {
           </div>
         </Card>
 
-        {/* ── TAMBAHAN FITUR BARU: HISTORY DARI DATABASE ── */}
+        {/* ── TAMBAHAN FITUR BARU: HISTORY DARI DATABASE BESERTA FILTER WAKTU ── */}
         <Card 
           title={`Performance History (Database): ${selectedContainer || '-'}`} 
-          subtitle="Data historis CPU & RAM 30 menit terakhir ditarik langsung dari MySQL Server" 
+          subtitle="Data historis CPU & RAM ditarik langsung dari MySQL Server" 
           delay="0.45s"
           style={{ marginBottom: 20 }}
+          rightElement={
+            <select 
+              value={timeFilter} 
+              onChange={(e) => setTimeFilter(Number(e.target.value))}
+              style={{
+                padding: '6px 12px',
+                borderRadius: '6px',
+                border: '1px solid #cbd5e1',
+                fontSize: '12px',
+                fontWeight: '600',
+                color: '#475569',
+                backgroundColor: '#f8fafc',
+                cursor: 'pointer',
+                outline: 'none'
+              }}
+            >
+              <option value={30}>30 Menit Terakhir</option>
+              <option value={60}>1 Jam Terakhir</option>
+              <option value={180}>3 Jam Terakhir</option>
+              <option value={1440}>24 Jam Terakhir</option>
+              <option value={10080}>7 Hari Terakhir</option>
+              <option value={43200}>30 Hari Terakhir</option>
+            </select>
+          }
         >
           <div style={{ height: 280, width: '100%', marginTop: 20 }}>
             {historyData.length > 0 ? (
@@ -294,7 +319,7 @@ export default function ContainerDocker() {
               </ResponsiveContainer>
             ) : (
               <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
-                Data histori tidak tersedia di database untuk kontainer ini.
+                Data histori tidak tersedia di database untuk rentang waktu ini.
               </div>
             )}
           </div>

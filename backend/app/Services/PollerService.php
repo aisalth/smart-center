@@ -195,9 +195,6 @@ class PollerService
         ];
     }
 
-    /**
-     * Calculate rate in bps, handling counter wrap.
-     */
     public function calculateRate(int $current, int $previous, int $intervalSeconds): int
     {
         $max32 = 4294967295;

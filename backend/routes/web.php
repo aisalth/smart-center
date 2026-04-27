@@ -14,3 +14,4 @@ Route::get('/devices', [DeviceWebController::class, 'index'])->name('devices.ind
 Route::get('/devices/create', [DeviceWebController::class, 'create'])->name('devices.create');
 Route::post('/devices', [DeviceWebController::class, 'store'])->name('devices.store');
 Route::get('/devices/{id}', [DeviceWebController::class, 'show'])->name('devices.show');
+

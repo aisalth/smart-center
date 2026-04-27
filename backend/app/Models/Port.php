@@ -9,11 +9,18 @@ class Port extends Model
     protected $table = 'ports';
     protected $primaryKey = 'port_id';
     public $timestamps = false;
+    protected $guarded = [];
 
     protected $fillable = [
         'device_id', 'ifIndex', 'ifName', 'ifDescr', 'ifType',
         'ifSpeed', 'ifAdminStatus', 'ifOperStatus'
     ];
+    protected function serializeDate(\DateTimeInterface $date): string
+    {
+        return \Carbon\Carbon::instance($date)
+            ->setTimezone('Asia/Jakarta')
+            ->format('Y-m-d H:i:s');
+    }
 
     protected $casts = [
         'ifSpeed' => 'integer',

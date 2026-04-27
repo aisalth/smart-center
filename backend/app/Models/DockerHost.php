@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class DockerHost extends Model
 {
     protected $primaryKey = 'docker_host_id';
+    public $timestamps = false;
+    protected $guarded = [];
     
     protected $fillable = [
         'device_id', 'name', 'status', 'disabled', 
@@ -17,6 +19,10 @@ class DockerHost extends Model
         'disabled' => 'boolean',
         'last_connected' => 'datetime',
     ];
+
+    public function device() { 
+        return $this->belongsTo(Device::class, 'device_id'); 
+    }
 
     public function containers(): HasMany
     {

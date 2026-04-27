@@ -1,4 +1,4 @@
-// src/api/zakiApi.js
+// src/api/zakiApi.jsx
 import axios from 'axios';
 
 const zakiClient = axios.create({
@@ -49,10 +49,10 @@ export const getZakiHealth = async () => {
   }
 };
 
-// --- TAMBAHAN FITUR: Ambil History dari Laravel ---
-export const getContainerHistory = async (containerName) => {
+// --- TAMBAHAN FITUR: Ambil History dari Laravel dengan Filter Waktu ---
+export const getContainerHistory = async (containerName, minutes = 1440) => {
   try {
-    const response = await laravelClient.get(`/monitoring/container-history/${containerName}`);
+    const response = await laravelClient.get(`/monitoring/container-history/${containerName}?minutes=${minutes}`);
     return response.data.data;
   } catch (error) {
     console.error(`Gagal mengambil histori container ${containerName} dari Laravel:`, error);

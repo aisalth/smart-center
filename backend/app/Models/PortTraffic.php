@@ -8,6 +8,7 @@ class PortTraffic extends Model
 {
     protected $table = 'port_traffic';
     public $timestamps = false;
+    protected $guarded = [];
 
     protected $fillable = [
         'port_id', 'timestamp', 'in_octets', 'out_octets', 'in_rate', 'out_rate'
@@ -20,6 +21,12 @@ class PortTraffic extends Model
         'in_rate' => 'integer',
         'out_rate' => 'integer',
     ];
+    protected function serializeDate(\DateTimeInterface $date): string
+    {
+        return \Carbon\Carbon::instance($date)
+            ->setTimezone('Asia/Jakarta')
+            ->format('Y-m-d H:i:s');
+    }
 
     public function port()
     {

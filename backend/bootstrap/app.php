@@ -16,7 +16,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        //
+        $middleware->append(\App\Http\Middleware\ForceJsonTimezone::class);
+    })
+    ->booting(function () {
+        date_default_timezone_set('Asia/Jakarta');
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

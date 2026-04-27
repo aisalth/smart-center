@@ -28,4 +28,11 @@ class Storage extends Model
     {
         return $this->belongsTo(Device::class, 'device_id', 'device_id');
     }
+
+    protected function serializeDate(\DateTimeInterface $date): string
+    {
+        return \Carbon\Carbon::instance($date)
+            ->setTimezone('Asia/Jakarta')
+            ->format('Y-m-d H:i:s');
+    }
 }

@@ -37,4 +37,6 @@ class DockerContainer extends Model
     {
         return $this->hasMany(ContainerLog::class, 'container_id');
     }
+
 }
+
