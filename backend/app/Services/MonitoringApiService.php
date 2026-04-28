@@ -9,19 +9,19 @@ class MonitoringApiService
 {
     protected string $baseUrl;
 
-    public function __construct()
+    public function __construct(string $baseUrl = null)
     {
-        $this->baseUrl = config('monitoring.api_base_url');
+        $this->baseUrl = $baseUrl ?? config('monitoring.api_base_url');
     }
 
     public function fetchAll(): array
     {
         $response = Http::retry(3, 200)
-            ->timeout(10)
+            ->timeout(15)
             ->get($this->baseUrl);
 
         if ($response->failed() || $response->json('success') !== true) {
-            throw new Exception("Gagal mengambil data dari Monitoring API: " . $response->body());
+            throw new Exception("Gagal mengambil data dari Monitoring API ({$this->baseUrl}): " . $response->body());
         }
 
         return $response->json('data');
@@ -42,12 +42,12 @@ class MonitoringApiService
 
     public function fetchNetwork(): array
     {
-        $response = Http::retry(3, 200)
+        $response = Http::retry(2, 200)
             ->timeout(10)
             ->get("{$this->baseUrl}/network");
 
         if ($response->failed() || $response->json('success') !== true) {
-            \Illuminate\Support\Facades\Log::warning("Gagal fetch API /network: " . $response->body());
+            \Illuminate\Support\Facades\Log::warning("Gagal fetch API /network ({$this->baseUrl}): " . $response->body());
             return [];
         }
 

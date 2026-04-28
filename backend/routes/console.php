@@ -4,12 +4,25 @@ use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Log;
 use App\Jobs\PollMonitoringApiJob;
 
-Schedule::job(new PollMonitoringApiJob, 'monitoring')
+// ── Poll ibra (qode.my.id) ──
+Schedule::job(new PollMonitoringApiJob('ibra'), 'monitoring')
     ->everyMinute()
+    ->name('poll-monitoring-ibra')
     ->withoutOverlapping(2)
     ->onFailure(function () {
-        Log::error('PollMonitoringApiJob failed in scheduler');
+        Log::error('PollMonitoringApiJob [ibra] failed in scheduler');
     });
+
+// ── Poll alzaki (41.216.191.42:3000) ──
+Schedule::job(new PollMonitoringApiJob('alzaki'), 'monitoring')
+    ->everyMinute()
+    ->name('poll-monitoring-alzaki')
+    ->withoutOverlapping(2)
+    ->skip(fn () => empty(config('monitoring.targets.alzaki.api_base_url')))
+    ->onFailure(function () {
+        Log::error('PollMonitoringApiJob [alzaki] failed in scheduler');
+    });
+
 
 Schedule::command('snmp:poll')
     ->everyMinute()

@@ -8,22 +8,25 @@ use Exception;
 
 class DevicePoller
 {
-    public static function handle(array $data): ?Device
+    public static function handle(array $data, string $deviceIp = null, string $category = 'snmp'): ?Device
     {
         try {
+            $ip = $deviceIp ?? config('monitoring.device_ip');
+
             return Device::updateOrCreate(
-                ['ip' => config('monitoring.device_ip')],
+                ['ip' => $ip],
                 [
-                    'hostname' => $data['system']['hostname'] ?? 'Unknown',
-                    'os' => $data['system']['platform'] ?? null,
-                    'hardware' => $data['cpu']['model'] ?? null,
-                    'uptime' => $data['system']['uptime']['seconds'] ?? 0,
-                    'status' => 1,
+                    'hostname'    => $data['system']['hostname'] ?? 'Unknown',
+                    'os'          => $data['system']['platform'] ?? null,
+                    'hardware'    => $data['cpu']['model'] ?? null,
+                    'uptime'      => $data['system']['uptime']['seconds'] ?? 0,
+                    'status'      => 1,
+                    'category'    => $category,
                     'last_polled' => now(),
                 ]
             );
         } catch (Exception $e) {
-            Log::error("DevicePoller Error: " . $e->getMessage());
+            Log::error("DevicePoller Error (ip={$deviceIp}): " . $e->getMessage());
             return null;
         }
     }

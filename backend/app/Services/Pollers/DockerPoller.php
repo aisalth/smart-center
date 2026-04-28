@@ -24,44 +24,47 @@ class DockerPoller
                 $host = DockerHost::updateOrCreate(
                     ['device_id' => $device->device_id],
                     [
-                        'name' => $device->hostname . ' Docker',
-                        'status' => ($docker['running'] ?? 0) > 0 ? 1 : 0,
+                        'name'           => $device->hostname . ' Docker',
+                        'status'         => ($docker['running'] ?? 0) > 0 ? 1 : 0,
                         'last_connected' => now(),
                     ]
                 );
 
+                $activeIds = [];
+
                 foreach ($docker['containers'] as $containerData) {
                     $containerId = $containerData['id'] ?? $containerData['Id'] ?? $containerData['name'] ?? null;
-                    
+
                     if (!$containerId) {
                         continue;
                     }
 
+                    $activeIds[] = $containerId;
+
                     $container = DockerContainer::updateOrCreate(
                         [
-                            'docker_host_id' => $host->docker_host_id,
+                            'docker_host_id'      => $host->docker_host_id,
                             'container_docker_id' => $containerId,
                         ],
                         [
-                            'name' => $containerData['name'] ?? 'Unknown',
-                            'image' => $containerData['image'] ?? 'Unknown',
-                            'status' => $containerData['status'] ?? 'unknown',
-                            'state' => 'running',
-                            'ports' => [],
-                            'labels' => [],
-                            'networks' => [],
+                            'name'        => $containerData['name'] ?? 'Unknown',
+                            'image'       => $containerData['image'] ?? 'Unknown',
+                            'status'      => $containerData['status'] ?? 'unknown',
+                            'state'       => 'running',
+                            'ports'       => [],
+                            'labels'      => [],
+                            'networks'    => [],
                             'last_polled' => now(),
                         ]
                     );
 
-                    $stats = $containerData['stats'] ?? [];
-                    
-                    $cpuPercent = isset($stats['cpu']) ? (float) str_replace('%', '', $stats['cpu']) : null;
+                    $stats      = $containerData['stats'] ?? [];
+                    $cpuPercent = isset($stats['cpu'])        ? (float) str_replace('%', '', $stats['cpu'])        : null;
                     $memPercent = isset($stats['memPercent']) ? (float) str_replace('%', '', $stats['memPercent']) : null;
 
                     $memUsageBytes = null;
                     $memLimitBytes = null;
-                    
+
                     if (!empty($stats['memUsage'])) {
                         $memParts = explode(' / ', $stats['memUsage']);
                         if (count($memParts) === 2) {
@@ -73,35 +76,44 @@ class DockerPoller
                     Log::info("Menyimpan metrik untuk container: {$container->name}", [
                         'cpu_percent' => $cpuPercent,
                         'mem_percent' => $memPercent,
-                        'mem_usage' => $memUsageBytes,
-                        'mem_limit' => $memLimitBytes,
-                    ]);
-
-                    Log::info("Menyimpan metrik untuk container: {$container->name}", [
-                        'cpu_percent' => $cpuPercent,
-                        'mem_percent' => $memPercent,
-                        'mem_usage' => $memUsageBytes,
-                        'mem_limit' => $memLimitBytes,
+                        'mem_usage'   => $memUsageBytes,
+                        'mem_limit'   => $memLimitBytes,
                     ]);
 
                     DB::table('container_metrics')->updateOrInsert(
                         [
                             'container_id' => $container->id,
-                            'timestamp' => now()->startOfMinute()->toDateTimeString(),
+                            'timestamp'    => now()->startOfMinute()->toDateTimeString(),
                         ],
                         [
                             'cpu_usage_percent' => $cpuPercent,
                             'mem_usage_percent' => $memPercent,
-                            'mem_usage' => $memUsageBytes,
-                            'mem_limit' => $memLimitBytes,
-                            'net_rx_bytes' => 0,
-                            'net_tx_bytes' => 0,
-                            'blk_read_bytes' => 0,
-                            'blk_write_bytes' => 0,
-                            'pids' => 0,
+                            'mem_usage'         => $memUsageBytes,
+                            'mem_limit'         => $memLimitBytes,
+                            'net_rx_bytes'      => 0,
+                            'net_tx_bytes'      => 0,
+                            'blk_read_bytes'    => 0,
+                            'blk_write_bytes'   => 0,
+                            'pids'              => 0,
                         ]
                     );
                 }
+
+                // ── Mark container yang tidak ada di API polling ini sebagai exited ──
+                if (!empty($activeIds)) {
+                    DockerContainer::where('docker_host_id', $host->docker_host_id)
+                        ->whereNotIn('container_docker_id', $activeIds)
+                        ->update([
+                            'state'       => 'exited',
+                            'status'      => 'Exited',
+                            'last_polled' => now(),
+                        ]);
+                }
+
+                // ── Bersihkan container_metrics lama (>7 hari) ──
+                DB::table('container_metrics')
+                    ->where('timestamp', '<', now()->subDays(7))
+                    ->delete();
             });
         } catch (Exception $e) {
             Log::error("DockerPoller Error: " . $e->getMessage());
@@ -113,15 +125,15 @@ class DockerPoller
     {
         $memoryString = trim($memoryString);
         $value = (float) preg_replace('/[^\d.]/', '', $memoryString);
-        $unit = strtolower(preg_replace('/[\d.\s]/', '', $memoryString));
+        $unit  = strtolower(preg_replace('/[\d.\s]/', '', $memoryString));
 
         return match ($unit) {
-            'b' => (int) $value,
+            'b'        => (int) $value,
             'kib', 'kb' => (int) ($value * 1024),
             'mib', 'mb' => (int) ($value * 1024 * 1024),
             'gib', 'gb' => (int) ($value * 1024 * 1024 * 1024),
             'tib', 'tb' => (int) ($value * 1024 * 1024 * 1024 * 1024),
-            default => (int) $value,
+            default     => (int) $value,
         };
     }
 }
