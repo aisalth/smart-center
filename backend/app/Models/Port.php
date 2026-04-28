@@ -40,4 +40,9 @@ class Port extends Model
     {
         return $this->hasOne(PortTraffic::class, 'port_id', 'port_id')->latestOfMany('timestamp');
     }
+
+    public function portTraffic()
+    {
+        return $this->hasMany(PortTraffic::class, 'port_id', 'port_id');
+    }
 }

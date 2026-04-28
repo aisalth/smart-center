@@ -11,6 +11,13 @@ Schedule::job(new PollMonitoringApiJob, 'monitoring')
         Log::error('PollMonitoringApiJob failed in scheduler');
     });
 
+Schedule::command('snmp:poll')
+    ->everyMinute()
+    ->withoutOverlapping(2)
+    ->onFailure(function () {
+        Log::error('SNMP Poll failed in scheduler');
+    });
+
 Schedule::call(function () {
     $deleted = DB::table('container_metrics')
                  ->where('timestamp', '<', now()->subDays(30))
@@ -20,9 +27,9 @@ Schedule::call(function () {
 })->dailyAt('02:00');
 
 Schedule::call(function () {
-    $deleted = DB::table('container_metrics')
-                 ->where('timestamp', '<', now()->subDays(30))
+    $deleted = DB::table('snmp_metrics_history')
+                 ->where('recorded_at', '<', now()->subDays(30))
                  ->delete();
                  
-    \Log::info("Membersihkan database: {$deleted} baris container_metrics lama dihapus.");
-})->dailyAt('02:00');
+    Log::info("Cleanup: {$deleted} baris snmp_metrics_history lama dihapus.");
+})->dailyAt('02:30');

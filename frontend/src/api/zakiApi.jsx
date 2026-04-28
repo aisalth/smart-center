@@ -2,7 +2,7 @@
 import axios from 'axios';
 
 const zakiClient = axios.create({
-  baseURL: 'http://41.216.191.42:3000',
+  baseURL: 'https://qode.my.id/api-backend',
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',

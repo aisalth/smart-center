@@ -8,9 +8,16 @@ use Illuminate\Http\Request;
 
 class DeviceApiController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $devices = Device::with(['processors', 'storages', 'alerts' => fn($q) => $q->where('open', 1)])
+        $query = Device::with(['processors', 'storages', 'alerts' => fn($q) => $q->where('open', 1)]);
+
+        // Filter by category: snmp atau docker
+        if ($request->has('category')) {
+            $query->where('category', $request->get('category'));
+        }
+
+        $devices = $query
             ->orderByDesc('status')
             ->orderBy('hostname')
             ->get()
@@ -48,10 +55,24 @@ class DeviceApiController extends Controller
 
         $data['port']      = $data['port'] ?? 161;
         $data['transport'] = $data['transport'] ?? 'udp';
+        $data['category']  = 'snmp';
 
         $device = Device::create($data);
 
-        return response()->json(['data' => $this->formatDevice($device), 'message' => 'Device berhasil ditambahkan.'], 201);
+        // Auto-poll SNMP setelah device dibuat
+        try {
+            $snmpService = app(\App\Services\SnmpService::class);
+            $pollResult  = $snmpService->pollDevice($device);
+            $device->refresh();
+        } catch (\Exception $e) {
+            // Poll gagal bukan masalah fatal, device tetap tersimpan
+        }
+
+        return response()->json([
+            'data'    => $this->formatDevice($device),
+            'message' => 'Device berhasil ditambahkan dan di-poll.',
+            'polled'  => isset($pollResult) && $pollResult,
+        ], 201);
     }
 
     public function update(Request $request, Device $device)
@@ -74,8 +95,49 @@ class DeviceApiController extends Controller
 
     public function destroy(Device $device)
     {
-        $device->delete();
-        return response()->json(['message' => 'Device berhasil dihapus.']);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($device) {
+            $deviceId = $device->device_id;
+
+            // 1. Delete SNMP metrics history
+            \Illuminate\Support\Facades\DB::table('snmp_metrics_history')
+                ->where('device_id', $deviceId)->delete();
+
+            // 2. Delete port traffic (via ports)
+            $portIds = $device->ports()->pluck('port_id');
+            if ($portIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('port_traffic')
+                    ->whereIn('port_id', $portIds)->delete();
+            }
+
+            // 3. Delete ports
+            $device->ports()->delete();
+
+            // 4. Delete processors
+            $device->processors()->delete();
+
+            // 5. Delete storages
+            $device->storages()->delete();
+
+            // 6. Delete alerts
+            $device->alerts()->delete();
+
+            // 7. Delete docker containers + metrics (via docker_hosts)
+            $dockerHosts = $device->dockerHosts;
+            foreach ($dockerHosts as $host) {
+                $containerIds = $host->containers()->pluck('id');
+                if ($containerIds->isNotEmpty()) {
+                    \Illuminate\Support\Facades\DB::table('container_metrics')
+                        ->whereIn('container_id', $containerIds)->delete();
+                }
+                $host->containers()->delete();
+            }
+            $device->dockerHosts()->delete();
+
+            // 8. Delete device itself
+            $device->delete();
+        });
+
+        return response()->json(['message' => 'Device dan seluruh datanya berhasil dihapus.']);
     }
 
     private function formatDevice(Device $device, bool $detail = false): array
@@ -101,6 +163,7 @@ class DeviceApiController extends Controller
             'sysDescr'     => $device->sysDescr,
             'sysName'      => $device->sysName,
             'os'           => $device->os,
+            'category'     => $device->category ?? 'snmp',
         ];
 
         if ($detail) {

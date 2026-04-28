@@ -1,413 +1,335 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Topbar from '../components/Topbar';
 import Badge from '../components/ui/Badge';
 import Card from '../components/ui/Card';
 import StatCard from '../components/ui/StatCard';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useNotif } from '../components/NotificationProvider';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
-/* ── Konstanta & Seed Data ───────────────────────────────── */
-const DUMMY_USERS = [
-  { name: 'Budi S.', phone: '081234567890', email: 'budi.s@mail.com' },
-  { name: 'Siti A.', phone: '085678901234', email: 'siti.a@mail.com' },
-  { name: 'Rizky M.', phone: '081122334455', email: 'rizky.m@mail.com' },
-  { name: 'Dina F.', phone: '087766554433', email: 'dina.f@mail.com' },
-  { name: 'Agus T.', phone: '089911223344', email: 'agus.t@mail.com' },
-  { name: 'Fayrin H.', phone: '089988776655', email: 'fayrin.hoshizora@mail.com' },
-  { name: 'Aca', phone: '082133445566', email: 'aca.dev@mail.com' }
-];
+const API = 'http://127.0.0.1:8000/api/smartpay';
+const get = async (path) => { const r = await fetch(`${API}${path}`); return r.json(); };
 
-const TRX_TYPES = [
-  { type: 'qr', name: 'Bayar QRIS Merchant', range: [15000, 250000] },
-  { type: 'transfer', name: 'Kirim Uang (P2P)', range: [50000, 2000000] },
-  { type: 'topup', name: 'Top Up Saldo Wallet', range: [50000, 1000000] },
-  { type: 'payment', name: 'Bayar Tagihan / VA', range: [100000, 800000] },
-];
+const formatRp = n => new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',minimumFractionDigits:0}).format(n);
+const mono = { fontFamily:'JetBrains Mono, monospace' };
+const tblHead = { padding:'8px 12px', fontSize:10, color:'#64748b', textTransform:'uppercase' };
+const tblCell = { padding:'10px 12px', fontSize:12 };
 
-const INITIAL_CASHFLOW = Array.from({ length: 15 }).map((_, i) => ({
-  time: `10:${String(10 + i).padStart(2, '0')}`,
-  inbound: Math.floor(Math.random() * 8000000) + 2000000,
-  outbound: Math.floor(Math.random() * 6000000) + 1000000,
-}));
+const StatusBadge = ({status}) => {
+  if(status==='success') return <Badge variant="success">SUCCESS</Badge>;
+  if(status==='failed') return <Badge variant="danger">FAILED</Badge>;
+  return <Badge variant="warning">PENDING</Badge>;
+};
+const SevBadge = ({sev}) => {
+  if(sev==='critical') return <Badge variant="danger">CRITICAL</Badge>;
+  if(sev==='error') return <Badge variant="warning">ERROR</Badge>;
+  return <Badge variant="warning">WARNING</Badge>;
+};
 
-/* ── Helpers ─────────────────────────────────────────────── */
-const getCurrentTime = () => new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-const formatRupiah = (num) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);
-const generateIP = () => `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
-const getStatus = (rand) => rand > 0.85 ? 'gagal' : rand > 0.70 ? 'pending' : 'berhasil';
+// Toast notification colors
+const TOAST_COLORS = {
+  critical: { bg:'#fef2f2', border:'#fca5a5', icon:'🚨', color:'#dc2626' },
+  error:    { bg:'#fff7ed', border:'#fdba74', icon:'⚠️', color:'#ea580c' },
+  warning:  { bg:'#fefce8', border:'#fde047', icon:'⚡', color:'#ca8a04' },
+  info:     { bg:'#eff6ff', border:'#93c5fd', icon:'ℹ️', color:'#2563eb' },
+  success:  { bg:'#f0fdf4', border:'#86efac', icon:'✅', color:'#16a34a' },
+};
 
-/* ════════════════════════════════════════════════════════════
-   MAIN COMPONENT: BUSINESS & TRANSACTION MONITOR
-══════════════════════════════════════════════════════════════ */
-export default function BusinessMonitor() {
-  // Stats
-  const [totalVolume, setTotalVolume] = useState(1450000000); 
-  const [activeUsers, setActiveUsers] = useState(4520);
-  const [successRate, setSuccessRate] = useState(99.4);
-  const [ssoLoginsToday, setSsoLoginsToday] = useState(12840);
-
-  // Charts
-  const [cashflowData, setCashflowData] = useState(INITIAL_CASHFLOW);
-
-  // Live Feeds
-  const [liveTrx, setLiveTrx] = useState([]);
+export default function SmartPayDashboard() {
+  const { addNotif } = useNotif();
+  const [ssoStats, setSsoStats] = useState(null);
+  const [ssoWeekly, setSsoWeekly] = useState([]);
   const [liveAuth, setLiveAuth] = useState([]);
-  const [fraudAlerts, setFraudAlerts] = useState([]);
+  const [trafficStats, setTrafficStats] = useState(null);
+  const [hourlyTraffic, setHourlyTraffic] = useState([]);
+  const [liveTraffic, setLiveTraffic] = useState([]);
+  const [payStats, setPayStats] = useState(null);
+  const [liveTrx, setLiveTrx] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [seenAlertIds] = useState(() => new Set());
 
-  /* ── SIMULASI TRAFFIC BISNIS REAL-TIME ── */
-  useEffect(() => {
-    // 1. Initial Populate Feeds
-    setLiveTrx([
-      { id: 'TX901', time: getCurrentTime(), user: DUMMY_USERS[6], ip: generateIP(), action: 'Kirim Uang (P2P)', type: 'transfer', amount: 150000, status: 'berhasil' },
-      { id: 'TX902', time: getCurrentTime(), user: DUMMY_USERS[0], ip: generateIP(), action: 'Bayar QRIS Merchant', type: 'qr', amount: 45000, status: 'pending' },
-    ]);
-    
-    setLiveAuth([
-      { time: getCurrentTime(), user: DUMMY_USERS[2], ip: generateIP(), action: 'Login', provider: 'Email', status: 'berhasil' },
-      { time: getCurrentTime(), user: DUMMY_USERS[1], ip: generateIP(), action: 'Register', provider: 'Email', status: 'pending' },
-      { time: getCurrentTime(), user: DUMMY_USERS[5], ip: generateIP(), action: 'Login', provider: 'Email', status: 'berhasil' },
-    ]);
-    
-    setFraudAlerts([
-      { time: getCurrentTime(), user: DUMMY_USERS[3], ip: generateIP(), aktivitas: 'Multiple QR Generation Failed', severity: 'warning' }
-    ]);
-
-    // 2. Interval Updates (Traffic Simulation)
-    const trafficInterval = setInterval(() => {
-      // Update Volume & Users
-      setTotalVolume(prev => prev + (Math.floor(Math.random() * 5000000) + 500000));
-      setActiveUsers(prev => Math.max(2000, prev + (Math.floor(Math.random() * 31) - 10)));
-      
-      // Live Transactions Feed
-      setLiveTrx(prev => {
-        const t = TRX_TYPES[Math.floor(Math.random() * TRX_TYPES.length)];
-        const randStatus = Math.random();
-        const currentStatus = getStatus(randStatus);
-        
-        const newTrx = {
-          id: `TX${Math.floor(Math.random() * 9000) + 1000}`,
-          time: getCurrentTime(),
-          user: DUMMY_USERS[Math.floor(Math.random() * DUMMY_USERS.length)],
-          ip: generateIP(),
-          action: t.name,
-          type: t.type,
-          amount: Math.round((Math.floor(Math.random() * (t.range[1] - t.range[0])) + t.range[0]) / 1000) * 1000,
-          status: currentStatus
-        };
-
-        if (currentStatus === 'gagal') {
-          setSuccessRate(sr => Math.max(95, sr - 0.05));
-        } else if (currentStatus === 'berhasil') {
-          setSuccessRate(sr => Math.min(99.9, sr + 0.01));
-        }
-
-        return [newTrx, ...prev].slice(0, 10);
-      });
-
-      // Live Auth Feed (Fokus Email)
-      setLiveAuth(prev => {
-        const isRegister = Math.random() > 0.7; 
-        const randStatus = Math.random();
-        const currentStatus = getStatus(randStatus);
-        
-        if (currentStatus === 'berhasil') setSsoLoginsToday(prev => prev + 1);
-
-        const newAuth = {
-          time: getCurrentTime(),
-          user: isRegister ? { name: 'New User', phone: '0855' + Math.floor(Math.random() * 99999999), email: `new.${Math.floor(Math.random() * 1000)}@mail.com` } : DUMMY_USERS[Math.floor(Math.random() * DUMMY_USERS.length)],
-          ip: generateIP(),
-          action: isRegister ? 'Register' : 'Login',
-          provider: 'Email',
-          status: currentStatus
-        };
-        return [newAuth, ...prev].slice(0, 20); 
-      });
-
-      // Update Cashflow Chart
-      const d = new Date();
-      const timeStr = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-      setCashflowData(prev => {
-        if (prev[prev.length-1].time === timeStr) return prev; 
-        const newData = [...prev.slice(1)];
-        newData.push({
-          time: timeStr,
-          inbound: Math.floor(Math.random() * 8000000) + 3000000,
-          outbound: Math.floor(Math.random() * 7000000) + 1000000,
-        });
-        return newData;
-      });
-
-    }, 3500); 
-
-    // 3. Fraud / Security Alerts 
-    const securityInterval = setInterval(() => {
-      if (Math.random() > 0.7) {
-        setFraudAlerts(prev => {
-          const issues = ['Velocity Check Failed (P2P)', 'Suspicious IP Login', 'Unusual QR Payment Amount', 'Brute Force Login Attempt'];
-          const severities = ['suspicion', 'warning', 'error', 'critical'];
-          
-          return [{
-            time: getCurrentTime(),
-            user: DUMMY_USERS[Math.floor(Math.random() * DUMMY_USERS.length)],
-            ip: generateIP(),
-            aktivitas: issues[Math.floor(Math.random() * issues.length)],
-            severity: severities[Math.floor(Math.random() * severities.length)]
-          }, ...prev].slice(0, 10);
-        });
-      }
-    }, 12000);
-
-    return () => {
-      clearInterval(trafficInterval);
-      clearInterval(securityInterval);
-    };
+  // Initial load (all dashboards + charts)
+  const loadAll = useCallback(async () => {
+    try {
+      const [sso, week, tDash, tHour, pay, sec] = await Promise.all([
+        get('/sso/dashboard'), get('/sso/weekly'),
+        get('/traffic/dashboard'), get('/traffic/hourly'),
+        get('/payment/dashboard'), get('/security/alerts'),
+      ]);
+      setSsoStats(sso.data); setSsoWeekly(week.data);
+      setTrafficStats(tDash.data); setHourlyTraffic(tHour.data);
+      setPayStats(pay.data); setAlerts(sec.data);
+    } catch(e) { console.error('Init load failed',e); }
+    setLoading(false);
   }, []);
 
-  // Filter Data Auth
-  const registerAuthData = liveAuth.filter(auth => auth.action === 'Register');
-  const loginAuthData = liveAuth.filter(auth => auth.action === 'Login');
+  // Live feeds refresh + notifications (toast hanya critical)
+  const refreshLive = useCallback(async () => {
+    try {
+      const [auth, traf, trx, sso, pay] = await Promise.all([
+        get('/sso/live'), get('/traffic/live'), get('/payment/live'),
+        get('/sso/dashboard'), get('/payment/dashboard'),
+      ]);
 
-  // Helper render badge status & severity
-  const renderStatusBadge = (status) => {
-    switch(status) {
-      case 'berhasil': return <Badge variant="success">BERHASIL</Badge>;
-      case 'pending': return <Badge variant="warning">PENDING</Badge>;
-      case 'gagal': return <Badge variant="danger">GAGAL</Badge>;
-      default: return null;
-    }
-  };
+      // Log failed logins (no toast)
+      const failedLogins = (auth.data||[]).filter(a => a.status==='failed');
+      if (failedLogins.length >= 2) {
+        addNotif('warning', 'SSO Login Gagal', `${failedLogins.length} login gagal dalam batch terakhir`);
+      }
 
-  const renderSeverityBadge = (severity) => {
-    switch(severity) {
-      case 'critical': return <Badge variant="danger">CRITICAL</Badge>;
-      case 'error': return <Badge variant="warning" style={{ background: '#f97316', color: '#fff' }}>ERROR</Badge>; // Orange
-      case 'warning': return <Badge variant="warning">WARNING</Badge>;
-      case 'suspicion': return <Badge variant="info" style={{ background: '#e2e8f0', color: '#475569' }}>SUSPICION</Badge>;
-      default: return null;
+      // Log failed transactions (no toast)
+      const failedTrx = (trx.data||[]).filter(t => t.status==='failed');
+      failedTrx.forEach(t => {
+        addNotif('error', 'Transaksi Gagal', `${t.description} — ${t.user?.name} (${t.failure_reason || 'error'})`);
+      });
+
+      // CRITICAL: low success rate → toast + log
+      if (pay.data?.success_rate && pay.data.success_rate < 97) {
+        addNotif('critical', 'Success Rate Kritis!', `Payment success rate: ${pay.data.success_rate}% — di bawah threshold 97%`, true);
+      }
+
+      setLiveAuth(prev => [...(auth.data||[]), ...prev].slice(0,30));
+      setLiveTraffic(prev => [...(traf.data||[]), ...prev].slice(0,35));
+      setLiveTrx(prev => [...(trx.data||[]), ...prev].slice(0,20));
+      setSsoStats(sso.data); setPayStats(pay.data);
+    } catch(e) {
+      console.error('Live refresh failed',e);
+      addNotif('critical', 'Koneksi Terputus', 'Gagal terhubung ke API server', true);
     }
-  };
+  }, [addNotif]);
+
+  useEffect(() => {
+    loadAll();
+    const liveInt = setInterval(refreshLive, 5000);
+    const alertInt = setInterval(async () => {
+      try {
+        const r = await get('/security/alerts');
+        const newAlerts = r.data || [];
+        newAlerts.forEach(a => {
+          if (!seenAlertIds.has(a.id)) {
+            seenAlertIds.add(a.id);
+            // CRITICAL security → toast + log; error → log only
+            const isCrit = a.severity === 'critical';
+            addNotif(a.severity, `Security ${a.severity.toUpperCase()}`, `${a.description} — ${a.user?.name} (${a.ip})`, isCrit);
+          }
+        });
+        setAlerts(newAlerts);
+      } catch(e) {}
+    }, 15000);
+    return () => { clearInterval(liveInt); clearInterval(alertInt); };
+  }, [loadAll, refreshLive, addNotif, seenAlertIds]);
+
+  if (loading) return (
+    <><Topbar title="SmartPay Dashboard" subtitle="Loading..." />
+    <div style={{textAlign:'center',marginTop:80}}>
+      <div style={{width:40,height:40,border:'3px solid #f1f5f9',borderTop:'3px solid #8b5cf6',borderRadius:'50%',animation:'spin 1s linear infinite',margin:'0 auto 15px'}}/>
+      <div style={{color:'#64748b'}}>Memuat data dari API...</div>
+    </div></>
+  );
+
+  const sso = ssoStats || {};
+  const pay = payStats || {};
+  const traf = trafficStats || {};
 
   return (
     <>
-      <Topbar title="SmartPay Business Dashboard" subtitle="Monitoring Transaksi P2P, QRIS, Otentikasi SSO, dan Fraud" />
-      <div className="page-content section-gap" style={{ padding: '0 24px 40px' }}>
+      <Topbar title="SmartPay Dashboard" subtitle="SSO Monitoring · Website Traffic Pariwisata · Transaksi · Keamanan" />
+      <div className="page-content section-gap" style={{ padding:'0 24px 40px' }}>
 
-        {/* ── ROW 1: TOP KPI STATS ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginTop: 24, marginBottom: 24 }}>
-          <StatCard 
-            label="Active Users (Online)" 
-            value={activeUsers.toLocaleString()} 
-            changeText="Koneksi WebSocket aktif" 
-            color="#3b82f6" bg="rgba(59,130,246,.12)" delay="0s"
-          >
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#3b82f6', animation: 'pulse-ring 2s infinite' }} />
+        {/* ══ ROW 1: KPI STATS ══ */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, marginTop:20, marginBottom:24 }}>
+          <StatCard label="SSO Login Hari Ini" value={(sso.login?.today||0).toLocaleString()}
+            changeText={`✓ ${sso.login?.success||0} OK · ✗ ${sso.login?.failed||0} Gagal · Rate: ${sso.login?.rate||0}%`}
+            changeType="up" color="#8b5cf6" bg="rgba(139,92,246,.12)" delay="0s" />
+          <StatCard label="SSO Register Hari Ini" value={(sso.register?.today||0).toLocaleString()}
+            changeText={`✓ ${sso.register?.success||0} OK · ✗ ${sso.register?.failed||0} Gagal · Rate: ${sso.register?.rate||0}%`}
+            changeType="up" color="#3b82f6" bg="rgba(59,130,246,.12)" delay="0.1s" />
+          <StatCard label="Website Visitors" value={(traf.visitors_today||0).toLocaleString()}
+            changeText={`${(traf.pageviews_today||0).toLocaleString()} pageviews · Bounce: ${traf.bounce_rate||0}%`}
+            changeType="up" color="#10b981" bg="rgba(16,185,129,.12)" delay="0.2s" />
+          <StatCard label="Active Sessions" value={(sso.active_sessions||0).toLocaleString()}
+            changeText={`${sso.blocked_ips||0} IP diblokir`} color="#f59e0b" bg="rgba(245,158,11,.12)" delay="0.3s">
+            <span style={{width:10,height:10,borderRadius:'50%',background:'#f59e0b',animation:'pulse-ring 2s infinite'}} />
           </StatCard>
-
-          <StatCard 
-            label="SSO Logins & Registers (Email)" 
-            value={ssoLoginsToday.toLocaleString()} 
-            changeText="Aktivitas hari ini" changeType="up" 
-            color="#8b5cf6" bg="rgba(139,92,246,.12)" delay="0.1s" 
-          />
-
-          <StatCard 
-            label="Transaction Success Rate" 
-            value={`${successRate.toFixed(2)}%`} 
-            changeText={successRate > 98 ? "Sangat Stabil" : "Butuh Perhatian"} 
-            changeType={successRate > 98 ? "up" : "down"}
-            color={successRate > 98 ? "#22c55e" : "#f59e0b"} 
-            bg={successRate > 98 ? "rgba(34,197,94,.12)" : "rgba(245,158,11,.12)"} 
-            delay="0.2s" 
-          />
-
-          <StatCard 
-            label="Total Volume Transaksi" 
-            value={`Rp ${(totalVolume / 1000000000).toFixed(2)} M`} 
-            changeText="Hari ini" changeType="up" 
-            color="#10b981" bg="rgba(16,185,129,.12)" delay="0.3s" 
-          />
         </div>
 
-        {/* ── ROW 2: LIVE CASHFLOW ── */}
-        <div style={{ marginBottom: 24 }}>
-          <Card title="Live Cashflow: Inbound vs Outbound" subtitle="Aliran dana masuk (Topup/Deposit) vs Keluar (P2P/Payment)" delay="0.4s">
-            <div style={{ height: 280, width: '100%', marginTop: 10 }}>
-              <ResponsiveContainer>
-                <AreaChart data={cashflowData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+        {/* ══ ROW 2: SSO WEEKLY + TRAFFIC HOURLY CHARTS ══ */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, marginBottom:24 }}>
+          <Card title="📊 SSO Activity (7 Hari)" subtitle="Login & Register harian dari API">
+            <div style={{ height:260, marginTop:10 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={ssoWeekly} margin={{top:10,right:10,left:-20,bottom:0}}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="day" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis fontSize={10} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{borderRadius:8,border:'none',fontSize:12}} />
+                  <Legend iconType="square" wrapperStyle={{fontSize:11}} />
+                  <Bar dataKey="login_success" name="Login OK" fill="#8b5cf6" radius={[2,2,0,0]} />
+                  <Bar dataKey="login_failed" name="Login Fail" fill="#ef4444" radius={[2,2,0,0]} />
+                  <Bar dataKey="register_success" name="Reg OK" fill="#3b82f6" radius={[2,2,0,0]} />
+                  <Bar dataKey="register_failed" name="Reg Fail" fill="#f59e0b" radius={[2,2,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          <Card title="🌐 Traffic Portal Pariwisata (24 Jam)" subtitle="Visitors & pageviews per jam dari API">
+            <div style={{ height:260, marginTop:10 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hourlyTraffic} margin={{top:10,right:10,left:-20,bottom:0}}>
                   <defs>
-                    <linearGradient id="colorIn" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3} /><stop offset="95%" stopColor="#10b981" stopOpacity={0} /></linearGradient>
-                    <linearGradient id="colorOut" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} /><stop offset="95%" stopColor="#3b82f6" stopOpacity={0} /></linearGradient>
+                    <linearGradient id="gVis" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient>
+                    <linearGradient id="gPv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/></linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} dy={10} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(val) => `${val / 1000000}M`} />
-                  <Tooltip contentStyle={{ borderRadius: 8, border: 'none', fontSize: 12 }} formatter={(value) => `Rp ${(value / 1000000).toFixed(1)}M`} />
-                  <Area type="monotone" dataKey="inbound" name="Inbound" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorIn)" />
-                  <Area type="monotone" dataKey="outbound" name="Outbound" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorOut)" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="hour" fontSize={10} tickLine={false} axisLine={false} minTickGap={20} />
+                  <YAxis fontSize={10} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{borderRadius:8,border:'none',fontSize:12}} />
+                  <Legend iconType="square" wrapperStyle={{fontSize:11}} />
+                  <Area type="monotone" dataKey="visitors" name="Visitors" stroke="#10b981" fill="url(#gVis)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="pageviews" name="Pageviews" stroke="#3b82f6" fill="url(#gPv)" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </Card>
         </div>
 
-        {/* ── ROW 3: LIVE TRANSACTIONS STREAM ── */}
-        <div style={{ marginBottom: 24 }}>
-          <Card title="Live Transactions Stream" subtitle="Traffic Real-time Transaksi Platform" rightElement={<span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', display: 'block', animation: 'pulse-ring 1s infinite' }} />} delay="0.5s">
-            <div style={{ maxHeight: 260, overflowY: 'auto', paddingRight: 5, marginTop: 10 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
-                <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>
-                  <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', fontSize: 10, color: '#64748b', textTransform: 'uppercase' }}>
-                    <th style={{ padding: '8px 12px' }}>Waktu</th>
-                    <th style={{ padding: '8px 12px' }}>IP Address</th>
-                    <th style={{ padding: '8px 12px' }}>Nama User & Nomor</th>
-                    <th style={{ padding: '8px 12px' }}>Aktivitas</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'right' }}>Nominal</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'center' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {liveTrx.map((trx, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>{trx.time}</td>
-                      <td style={{ padding: '12px', fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>{trx.ip}</td>
-                      <td style={{ padding: '12px' }}>
-                        <div style={{ fontWeight: 600, color: '#334155', fontSize: 12 }}>{trx.user.name}</div>
-                        <div style={{ fontSize: 11, color: '#64748b' }}>{trx.user.phone}</div>
-                      </td>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#475569' }}>
-                        <span style={{ display: 'block', fontWeight: 500 }}>{trx.action}</span>
-                        <span style={{ fontSize: 10, color: '#94a3b8' }}>{trx.id}</span>
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#334155' }}>
-                        {formatRupiah(trx.amount)}
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'center' }}>
-                        {renderStatusBadge(trx.status)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+        {/* ══ ROW 3: PAYMENT STATS ══ */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16, marginBottom:24 }}>
+          <div style={{background:'rgba(16,185,129,.08)',borderRadius:12,padding:'16px 20px',border:'1px solid var(--card-border)'}}>
+            <div style={{fontSize:11,color:'#64748b',fontWeight:600}}>Volume Transaksi</div>
+            <div style={{fontSize:22,fontWeight:800,color:'#10b981',...mono}}>Rp {((pay.volume_today||0)/1e9).toFixed(2)} M</div>
+            <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{(pay.trx_count_today||0).toLocaleString()} transaksi</div>
+          </div>
+          <div style={{background:'rgba(34,197,94,.08)',borderRadius:12,padding:'16px 20px',border:'1px solid var(--card-border)'}}>
+            <div style={{fontSize:11,color:'#64748b',fontWeight:600}}>Success Rate</div>
+            <div style={{fontSize:22,fontWeight:800,color:(pay.success_rate||0)>98?'#22c55e':'#f59e0b',...mono}}>{pay.success_rate||0}%</div>
+            <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Peak: {pay.peak_tps||0} TPS</div>
+          </div>
+          <div style={{background:'rgba(59,130,246,.08)',borderRadius:12,padding:'16px 20px',border:'1px solid var(--card-border)'}}>
+            <div style={{fontSize:11,color:'#64748b',fontWeight:600}}>Active Users</div>
+            <div style={{fontSize:22,fontWeight:800,color:'#3b82f6',...mono}}>{(pay.active_users||0).toLocaleString()}</div>
+            <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Avg: {formatRp(pay.avg_trx_value||0)}/trx</div>
+          </div>
         </div>
 
-        {/* ── ROW 4: LIVE REGISTER SSO EMAIL ── */}
-        <div style={{ marginBottom: 24 }}>
-          <Card title="Live Register SSO Email" subtitle="Log aktivitas pendaftaran pengguna baru via Email" rightElement={<Badge variant="success">SSO Active</Badge>} delay="0.6s">
-            <div style={{ maxHeight: 260, overflowY: 'auto', paddingRight: 5, marginTop: 10 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
-                <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>
-                  <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', fontSize: 10, color: '#64748b', textTransform: 'uppercase' }}>
-                    <th style={{ padding: '8px 12px' }}>Waktu</th>
-                    <th style={{ padding: '8px 12px' }}>IP Address</th>
-                    <th style={{ padding: '8px 12px' }}>Nama User</th>
-                    <th style={{ padding: '8px 12px' }}>Nomor HP</th>
-                    <th style={{ padding: '8px 12px' }}>Email</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'center' }}>Provider</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'center' }}>Status</th>
+        {/* ══ ROW 4: LIVE SSO AUTH ══ */}
+        <Card title="🔐 Live SSO Authentication" subtitle="Data real-time dari API /sso/live" rightElement={<Badge variant="success">SSO Active</Badge>} style={{marginBottom:24}}>
+          <div style={{ maxHeight:300, overflowY:'auto', marginTop:10 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:800 }}>
+              <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>
+                <tr style={{ borderBottom:'1px solid var(--card-border)', textAlign:'left' }}>
+                  {['WAKTU','IP','USER','EMAIL','AKSI','METHOD','BROWSER','REGION','STATUS'].map(h => <th key={h} style={tblHead}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {liveAuth.length===0 ? <tr><td colSpan={9} style={{...tblCell,textAlign:'center',color:'#94a3b8'}}>Fetching data...</td></tr> :
+                liveAuth.map((a,i) => (
+                  <tr key={a.id+i} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                    <td style={{...tblCell,color:'#64748b',...mono}}>{a.time}</td>
+                    <td style={{...tblCell,color:'#94a3b8',...mono,fontSize:11}}>{a.ip}</td>
+                    <td style={{...tblCell,fontWeight:600,color:'#334155'}}>{a.user?.name}</td>
+                    <td style={{...tblCell,color:'#3b82f6',fontSize:11}}>{a.user?.email}</td>
+                    <td style={tblCell}>
+                      <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:4, background:a.action==='register'?'rgba(59,130,246,.1)':'rgba(139,92,246,.1)', color:a.action==='register'?'#3b82f6':'#8b5cf6' }}>{a.action}</span>
+                    </td>
+                    <td style={{...tblCell,fontSize:11,color:'#64748b'}}>{a.method}</td>
+                    <td style={{...tblCell,fontSize:11,color:'#64748b'}}>{a.browser}</td>
+                    <td style={{...tblCell,fontSize:11,color:'#475569'}}>{a.region}</td>
+                    <td style={{...tblCell,textAlign:'center'}}><StatusBadge status={a.status}/></td>
                   </tr>
-                </thead>
-                <tbody>
-                  {registerAuthData.length === 0 ? (
-                    <tr><td colSpan="7" style={{ padding: 20, textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>Belum ada data pendaftaran terbaru.</td></tr>
-                  ) : registerAuthData.map((auth, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>{auth.time}</td>
-                      <td style={{ padding: '12px', fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>{auth.ip}</td>
-                      <td style={{ padding: '12px', fontWeight: 600, color: '#334155', fontSize: 12 }}>{auth.user.name}</td>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#64748b' }}>{auth.user.phone}</td>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#3b82f6' }}>{auth.user.email}</td>
-                      <td style={{ padding: '12px', textAlign: 'center' }}>
-                         <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
-                           {auth.provider}
-                         </span>
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'center' }}>
-                        {renderStatusBadge(auth.status)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
 
-        {/* ── ROW 5: LIVE LOGIN SSO EMAIL ── */}
-        <div style={{ marginBottom: 24 }}>
-          <Card title="Live Login SSO Email" subtitle="Log aktivitas masuk pengguna via Email" rightElement={<Badge variant="primary">SSO Active</Badge>} delay="0.7s">
-            <div style={{ maxHeight: 260, overflowY: 'auto', paddingRight: 5, marginTop: 10 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
-                <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>
-                  <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', fontSize: 10, color: '#64748b', textTransform: 'uppercase' }}>
-                    <th style={{ padding: '8px 12px' }}>Waktu</th>
-                    <th style={{ padding: '8px 12px' }}>IP Address</th>
-                    <th style={{ padding: '8px 12px' }}>Nama User</th>
-                    <th style={{ padding: '8px 12px' }}>Nomor HP</th>
-                    <th style={{ padding: '8px 12px' }}>Email</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'center' }}>Provider</th>
+        {/* ══ ROW 5: LIVE WEBSITE TRAFFIC ══ */}
+        <Card title="🌍 Live Website Traffic — Portal Pariwisata" subtitle="Data real-time dari API /traffic/live" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'block',animation:'pulse-ring 1s infinite'}}/>} style={{marginBottom:24}}>
+          <div style={{ maxHeight:300, overflowY:'auto', marginTop:10 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:900 }}>
+              <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>
+                <tr style={{ borderBottom:'1px solid var(--card-border)', textAlign:'left' }}>
+                  {['WAKTU','IP','HALAMAN','HTTP','DEVICE','BROWSER','REGION','REFERRER','RESP','DURASI'].map(h => <th key={h} style={tblHead}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {liveTraffic.length===0 ? <tr><td colSpan={10} style={{...tblCell,textAlign:'center',color:'#94a3b8'}}>Fetching data...</td></tr> :
+                liveTraffic.map((t,i) => (
+                  <tr key={t.id+i} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                    <td style={{...tblCell,color:'#64748b',...mono}}>{t.time}</td>
+                    <td style={{...tblCell,color:'#94a3b8',...mono,fontSize:11}}>{t.ip}</td>
+                    <td style={{...tblCell,fontWeight:600,color:'#10b981',fontSize:11,...mono}}>{t.page}</td>
+                    <td style={tblCell}>
+                      <span style={{fontSize:10,fontWeight:700,color:t.status_code===200?'#22c55e':t.status_code===404?'#ef4444':'#f59e0b',...mono}}>{t.status_code}</span>
+                    </td>
+                    <td style={{...tblCell,fontSize:11,color:'#64748b'}}>{t.device}</td>
+                    <td style={{...tblCell,fontSize:11,color:'#64748b'}}>{t.browser}</td>
+                    <td style={{...tblCell,fontSize:11,color:'#475569'}}>{t.region}</td>
+                    <td style={tblCell}><span style={{fontSize:10,fontWeight:600,padding:'2px 6px',borderRadius:4,background:'#f8fafc',border:'1px solid #e2e8f0',color:'#475569'}}>{t.referrer}</span></td>
+                    <td style={{...tblCell,color:t.response_time_ms>500?'#ef4444':'#64748b',...mono,fontSize:11}}>{t.response_time_ms}ms</td>
+                    <td style={{...tblCell,color:'#64748b',...mono,fontSize:11}}>{t.session_duration}s</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {loginAuthData.length === 0 ? (
-                    <tr><td colSpan="6" style={{ padding: 20, textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>Belum ada data login terbaru.</td></tr>
-                  ) : loginAuthData.map((auth, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>{auth.time}</td>
-                      <td style={{ padding: '12px', fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>{auth.ip}</td>
-                      <td style={{ padding: '12px', fontWeight: 600, color: '#334155', fontSize: 12 }}>{auth.user.name}</td>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#64748b' }}>{auth.user.phone}</td>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#3b82f6' }}>{auth.user.email}</td>
-                      <td style={{ padding: '12px', textAlign: 'center' }}>
-                         <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
-                           {auth.provider}
-                         </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
 
-        {/* ── ROW 6: SECURITY & FRAUD MONITOR ── */}
-        <div>
-          <Card title="Security & Fraud Monitor" subtitle="Sistem deteksi anomali keamanan dan transaksi" rightElement={<span style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626', display: 'inline-block', animation: 'blink 1.5s infinite' }} />} delay="0.8s">
-            <div style={{ maxHeight: 260, overflowY: 'auto', paddingRight: 5, marginTop: 10 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
-                <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>
-                  <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', fontSize: 10, color: '#64748b', textTransform: 'uppercase' }}>
-                    <th style={{ padding: '8px 12px' }}>Waktu</th>
-                    <th style={{ padding: '8px 12px' }}>IP Address</th>
-                    <th style={{ padding: '8px 12px' }}>Nama User</th>
-                    <th style={{ padding: '8px 12px' }}>Nomor HP</th>
-                    <th style={{ padding: '8px 12px' }}>Email</th>
-                    <th style={{ padding: '8px 12px' }}>Aktivitas</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'center' }}>Severity</th>
+        {/* ══ ROW 6: LIVE TRANSACTIONS ══ */}
+        <Card title="💳 Live Transactions" subtitle="Data real-time dari API /payment/live" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'block',animation:'pulse-ring 1s infinite'}}/>} style={{marginBottom:24}}>
+          <div style={{ maxHeight:300, overflowY:'auto', marginTop:10 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:800 }}>
+              <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>
+                <tr style={{ borderBottom:'1px solid var(--card-border)', textAlign:'left' }}>
+                  {['WAKTU','TRX ID','IP','USER','TIPE','NOMINAL','METHOD','STATUS'].map(h => <th key={h} style={tblHead}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {liveTrx.map((tx,i) => (
+                  <tr key={tx.trx_id+i} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                    <td style={{...tblCell,color:'#64748b',...mono}}>{tx.time}</td>
+                    <td style={{...tblCell,...mono,fontSize:11,color:'#94a3b8'}}>{tx.trx_id}</td>
+                    <td style={{...tblCell,...mono,fontSize:11,color:'#94a3b8'}}>{tx.ip}</td>
+                    <td style={{...tblCell,fontWeight:600,color:'#334155'}}>{tx.user?.name}</td>
+                    <td style={{...tblCell,color:'#475569',fontSize:12}}>{tx.description}</td>
+                    <td style={{...tblCell,fontWeight:700,color:'#334155',textAlign:'right'}}>{formatRp(tx.amount)}</td>
+                    <td style={{...tblCell,fontSize:11,color:'#64748b'}}>{tx.payment_method}</td>
+                    <td style={{...tblCell,textAlign:'center'}}><StatusBadge status={tx.status}/></td>
                   </tr>
-                </thead>
-                <tbody>
-                  {fraudAlerts.length === 0 ? (
-                    <tr><td colSpan="7" style={{ padding: 20, textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>Sistem aman, tidak ada anomali terdeteksi.</td></tr>
-                  ) : fraudAlerts.map((alert, i) => (
-                    <tr key={i} style={{ borderBottom: i < fraudAlerts.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>{alert.time}</td>
-                      <td style={{ padding: '12px', fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>{alert.ip}</td>
-                      <td style={{ padding: '12px', fontWeight: 600, color: '#334155', fontSize: 12 }}>{alert.user.name}</td>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#64748b' }}>{alert.user.phone}</td>
-                      <td style={{ padding: '12px', fontSize: 12, color: '#3b82f6' }}>{alert.user.email}</td>
-                      <td style={{ padding: '12px', fontSize: 12, fontWeight: 600, color: '#475569' }}>{alert.aktivitas}</td>
-                      <td style={{ padding: '12px', textAlign: 'center' }}>
-                        {renderSeverityBadge(alert.severity)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {/* ══ ROW 7: SECURITY ALERTS ══ */}
+        <Card title="🛡️ Security & Fraud Monitor" subtitle="Data dari API /security/alerts" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#dc2626',display:'inline-block',animation:'blink 1.5s infinite'}}/>}>
+          <div style={{ maxHeight:260, overflowY:'auto', marginTop:10 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:700 }}>
+              <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>
+                <tr style={{ borderBottom:'1px solid var(--card-border)', textAlign:'left' }}>
+                  {['WAKTU','IP','USER','DESKRIPSI','SEVERITY','STATUS'].map(h => <th key={h} style={tblHead}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {alerts.length===0 ? <tr><td colSpan={6} style={{...tblCell,textAlign:'center',color:'#94a3b8'}}>Sistem aman.</td></tr> :
+                alerts.map((a,i) => (
+                  <tr key={a.id+i} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                    <td style={{...tblCell,color:'#64748b',...mono}}>{a.time}</td>
+                    <td style={{...tblCell,...mono,fontSize:11,color:'#94a3b8'}}>{a.ip}</td>
+                    <td style={{...tblCell,fontWeight:600,color:'#334155'}}>{a.user?.name}</td>
+                    <td style={{...tblCell,fontWeight:600,color:'#475569'}}>{a.description}</td>
+                    <td style={{...tblCell,textAlign:'center'}}><SevBadge sev={a.severity}/></td>
+                    <td style={{...tblCell,textAlign:'center'}}>
+                      <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:a.resolved?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',color:a.resolved?'#22c55e':'#ef4444'}}>{a.resolved?'Resolved':'Open'}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
 
       </div>
     </>

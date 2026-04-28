@@ -47,6 +47,38 @@ class DockerMonitoringController extends Controller
         return $this->jsonResponse($hosts);
     }
 
+    public function getHostDetail($id): JsonResponse
+    {
+        $host = DockerHost::with('device')->findOrFail($id);
+        $containerCount = $host->containers()->count();
+        $runningCount = $host->containers()->where('state', 'running')->count();
+
+        return $this->jsonResponse([
+            'docker_host_id'  => $host->docker_host_id,
+            'name'            => $host->name,
+            'connection_type' => $host->connection_type,
+            'socket_path'     => $host->socket_path,
+            'docker_version'  => $host->docker_version,
+            'api_version'     => $host->api_version,
+            'status'          => $host->status,
+            'last_connected'  => $host->last_connected,
+            'last_error'      => $host->last_error,
+            'containers_total'   => $containerCount,
+            'containers_running' => $runningCount,
+            'device' => $host->device ? [
+                'device_id'   => $host->device->device_id,
+                'hostname'    => $host->device->hostname,
+                'ip'          => $host->device->ip,
+                'os'          => $host->device->os,
+                'hardware'    => $host->device->hardware,
+                'uptime'      => $host->device->uptime,
+                'status'      => (bool) $host->device->status,
+                'last_polled' => $host->device->last_polled,
+                'sysDescr'    => $host->device->sysDescr,
+            ] : null,
+        ]);
+    }
+
     public function getContainers($id): JsonResponse
     {
         $host = DockerHost::findOrFail($id);

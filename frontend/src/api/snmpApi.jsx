@@ -29,8 +29,9 @@ async function request(method, path, body = null) {
  * Ambil semua device + meta (total, online, offline)
  * Response: { data: Device[], meta: { total, online, offline } }
  */
-export async function getSnmpDevices() {
-  return request('GET', '/devices');
+export async function getSnmpDevices(category = null) {
+  const params = category ? `?category=${category}` : '';
+  return request('GET', `/devices${params}`);
 }
 
 /**
@@ -148,6 +149,17 @@ export async function getSnmpTraffic(portId, range = '1h') {
  */
 export async function getSnmpAlerts(deviceId, openOnly = true) {
   return request('GET', `/devices/${deviceId}/alerts?open=${openOnly ? 1 : 0}`);
+}
+
+/**
+ * History data SNMP (CPU, Memory, Disk) per menit
+ * @param {number} deviceId
+ * @param {string} type - 'cpu' | 'memory' | 'disk' | 'all'
+ * @param {string} range - '1h' | '6h' | '24h' | '7d' | '30d'
+ * Response: { device_id, range, type, charts: { cpu: { labels, data }, ... }, total_records }
+ */
+export async function getSnmpMetricsHistory(deviceId, type = 'all', range = '1h') {
+  return request('GET', `/devices/${deviceId}/metrics-history?type=${type}&range=${range}`);
 }
 
 // ─── Helper Formatters ────────────────────────────────────

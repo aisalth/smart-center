@@ -6,6 +6,7 @@ use App\Models\Device;
 use App\Models\Port;
 use App\Models\PortTraffic;
 use App\Models\Processor;
+use App\Models\SnmpMetricHistory;
 use App\Models\Storage;
 use Illuminate\Support\Facades\Log;
 
@@ -82,6 +83,15 @@ class SnmpService
                 'processor_usage' => $usage,
             ]
         );
+
+        // History log
+        SnmpMetricHistory::create([
+            'device_id'     => $device->device_id,
+            'metric_type'   => 'cpu',
+            'metric_label'  => 'CPU',
+            'value_percent' => $usage,
+            'recorded_at'   => now(),
+        ]);
     } catch (\Exception $e) {
         Log::warning("SNMP pollCpu failed for {$device->hostname}: " . $e->getMessage());
     }
@@ -129,6 +139,17 @@ class SnmpService
                         'storage_perc'  => $perc,
                     ]
                 );
+
+                // History log
+                SnmpMetricHistory::create([
+                    'device_id'     => $device->device_id,
+                    'metric_type'   => $type,
+                    'metric_label'  => $descr,
+                    'value_percent' => $perc,
+                    'value_used'    => $used,
+                    'value_total'   => $size,
+                    'recorded_at'   => now(),
+                ]);
             }
         } catch (\Exception $e) {
             Log::warning("SNMP pollStorage failed for {$device->hostname}: " . $e->getMessage());

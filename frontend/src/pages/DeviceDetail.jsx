@@ -5,7 +5,7 @@ import Card from '../components/ui/Card';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
 
 // ══ SNMP API IMPORT ══
-import { getSnmpSummary, getSnmpCpu, getSnmpStorage, getSnmpPorts, getSnmpTraffic, pollSnmpDevice, formatUptime } from '../api/snmpApi';
+import { getSnmpSummary, getSnmpCpu, getSnmpStorage, getSnmpPorts, getSnmpTraffic, pollSnmpDevice, deleteSnmpDevice, formatUptime, getSnmpMetricsHistory } from '../api/snmpApi';
 
 // Data Dummy untuk Grafik (fallback saat data belum ada)
 const generateDummyData = () => {
@@ -56,14 +56,45 @@ export default function DeviceDetail() {
   const [error, setError]           = useState(null);
   const [lastFetch, setLastFetch]   = useState('—');
 
-  // ══ CPU History untuk grafik (append setiap fetch) ══
+  // ══ History data dari API ══
   const [cpuHistory, setCpuHistory] = useState([]);
   const [memHistory, setMemHistory] = useState([]);
+  const [diskHistory, setDiskHistory] = useState([]);
+  const [historyRange, setHistoryRange] = useState('1h');
 
   // Dummy data fallback
   const [procData]    = useState(generateDummyData());
   const [diskData]    = useState(generateDummyData());
   const [networkData] = useState(generateDummyData().map(d => ({...d, val: d.val * 10})));
+
+  // ══ FETCH METRICS HISTORY ══
+  const fetchHistory = async (range) => {
+    if (!id) return;
+    try {
+      const res = await getSnmpMetricsHistory(id, 'all', range);
+      const charts = res.charts || {};
+
+      if (charts.cpu) {
+        setCpuHistory(charts.cpu.labels.map((label, i) => ({ time: label, val: charts.cpu.data[i] ?? 0 })));
+      } else {
+        setCpuHistory([]);
+      }
+
+      if (charts.memory) {
+        setMemHistory(charts.memory.labels.map((label, i) => ({ time: label, val: charts.memory.data[i] ?? 0 })));
+      } else {
+        setMemHistory([]);
+      }
+
+      if (charts.disk) {
+        setDiskHistory(charts.disk.labels.map((label, i) => ({ time: label, val: charts.disk.data[i] ?? 0 })));
+      } else {
+        setDiskHistory([]);
+      }
+    } catch (err) {
+      console.error('History fetch failed:', err);
+    }
+  };
 
   // ══ FETCH SUMMARY ══
   const fetchData = async () => {
@@ -78,21 +109,6 @@ export default function DeviceDetail() {
       setSummary(summaryRes);
       setPorts(portsRes.data || []);
       setLastFetch(new Date().toLocaleTimeString('id-ID'));
-
-      // Append ke history untuk grafik
-      const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-      const cpuVal = summaryRes.cpu?.details?.[0]?.usage ?? 0;
-      const memVal = summaryRes.memory?.[0]?.perc ?? 0;
-
-      setCpuHistory(prev => {
-        const next = [...prev, { time: now, val: cpuVal }];
-        return next.length > 20 ? next.slice(1) : next;
-      });
-
-      setMemHistory(prev => {
-        const next = [...prev, { time: now, val: memVal }];
-        return next.length > 20 ? next.slice(1) : next;
-      });
 
     } catch (err) {
       setError(err.message || 'Gagal memuat data device.');
@@ -118,10 +134,14 @@ export default function DeviceDetail() {
 
   useEffect(() => {
     fetchData();
-    // Auto refresh setiap 30 detik
-    const interval = setInterval(fetchData, 30000);
+    fetchHistory(historyRange);
+    // Auto refresh setiap 60 detik
+    const interval = setInterval(() => {
+      fetchData();
+      fetchHistory(historyRange);
+    }, 60000);
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, historyRange]);
 
   useEffect(() => {
     if (selectedPort) {
@@ -193,7 +213,7 @@ export default function DeviceDetail() {
             Kembali ke Server
           </button>
 
-          {/* ══ POLL BUTTON & STATUS ══ */}
+          {/* ══ POLL & DELETE BUTTONS ══ */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Update: {lastFetch}</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: summary?.status ? '#22c55e' : '#ef4444' }}>
@@ -206,6 +226,23 @@ export default function DeviceDetail() {
               style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: isPolling ? 'not-allowed' : 'pointer', opacity: isPolling ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
             >
               {isPolling ? '...' : '↻ Poll Now'}
+            </button>
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Hapus device "${summary?.hostname || 'ini'}" beserta SELURUH datanya (CPU, Memory, Disk, Port, Traffic, History)?\n\nAksi ini tidak bisa dibatalkan!`)) return;
+                try {
+                  await deleteSnmpDevice(id);
+                  alert('Device berhasil dihapus.');
+                  navigate('/server');
+                } catch (err) {
+                  alert('Gagal menghapus: ' + (err.message || 'Unknown error'));
+                }
+              }}
+              style={{ background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = '#fff'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#ef4444'; }}
+            >
+              🗑 Hapus
             </button>
           </div>
         </div>
@@ -249,7 +286,7 @@ export default function DeviceDetail() {
             </div>
           </Card>
 
-          {/* CPU Chart — pakai data real dari SNMP history */}
+          {/* CPU Chart — pakai data real dari history API */}
           <MiniChart 
             title="Processor Load" 
             data={cpuHistory.length > 0 ? cpuHistory : procData} 
@@ -259,23 +296,56 @@ export default function DeviceDetail() {
           />
         </div>
 
+        {/* ══ HISTORY RANGE FILTER ══ */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>History Range:</span>
+          {['1h', '6h', '24h', '7d', '30d'].map(r => (
+            <button
+              key={r}
+              onClick={() => setHistoryRange(r)}
+              style={{
+                fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${historyRange === r ? '#3b82f6' : 'var(--card-border)'}`,
+                background: historyRange === r ? 'rgba(59,130,246,0.1)' : 'var(--card-bg)',
+                color: historyRange === r ? '#3b82f6' : 'var(--text-muted)',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {r === '1h' ? '1 Jam' : r === '6h' ? '6 Jam' : r === '24h' ? '24 Jam' : r === '7d' ? '7 Hari' : '30 Hari'}
+            </button>
+          ))}
+        </div>
+
         {/* ══ ROW 2: CPU HISTORY & RAM HISTORY ══ */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
           <MiniChart 
-            title="CPU Utilization" 
-            data={cpuHistory.length > 0 ? cpuHistory : procData} 
+            title="CPU History" 
+            data={cpuHistory.length > 0 ? cpuHistory : []} 
             color="#8b5cf6" 
             unit="%" 
             chartHeight={220} 
           />
           <MiniChart 
-            title="RAM Usage" 
+            title="Memory History" 
             data={memHistory.length > 0 ? memHistory : []} 
             color="#22c55e" 
             unit="%" 
             chartHeight={220} 
           />
         </div>
+
+        {/* ══ ROW 2.5: DISK HISTORY ══ */}
+        {diskHistory.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24, marginBottom: 24 }}>
+            <MiniChart 
+              title="Disk Usage History" 
+              data={diskHistory} 
+              color="#f59e0b" 
+              unit="%" 
+              chartHeight={220} 
+            />
+          </div>
+        )}
 
         {/* ══ ROW 3: STORAGE BAR CHART & NETWORK TRAFFIC ══ */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>

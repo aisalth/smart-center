@@ -12,10 +12,10 @@ class Device extends Model
 
     protected $fillable = [
         'hostname', 'sysName', 'display', 'ip', 'community', 'snmpver',
-        'port', 'transport', 'snmp_disable', 'os', 'type', 'hardware',
-        'version', 'sysDescr', 'status', 'status_reason', 'uptime',
-        'last_polled', 'last_ping', 'last_ping_timetaken', 'ignore',
-        'disabled', 'disable_notify'
+        'port', 'transport', 'snmp_disable', 'os', 'type', 'category',
+        'hardware', 'version', 'sysDescr', 'status', 'status_reason',
+        'uptime', 'last_polled', 'last_ping', 'last_ping_timetaken',
+        'ignore', 'disabled', 'disable_notify'
     ];
 
     protected $casts = [

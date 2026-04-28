@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Device;
 use App\Models\Port;
+use App\Models\SnmpMetricHistory;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class MetricApiController extends Controller
 {
@@ -231,6 +233,107 @@ class MetricApiController extends Controller
                 'note'      => $a->note,
                 'timestamp' => $a->timestamp,
             ]),
+        ]);
+    }
+
+    /**
+     * GET /api/devices/{device}/metrics-history?type=cpu&range=1h
+     *
+     * type: cpu | memory | disk | all (default: all)
+     * range: 1h | 6h | 24h | 7d | 30d (default: 1h)
+     */
+    public function metricsHistory(Device $device, Request $request)
+    {
+        $type    = $request->get('type', 'all');
+        $range   = $request->get('range', '1h');
+        $minutes = $this->rangeMinutes($range);
+        $since   = now()->subMinutes($minutes);
+
+        $query = SnmpMetricHistory::where('device_id', $device->device_id)
+            ->where('recorded_at', '>=', $since);
+
+        if ($type !== 'all') {
+            $query->where('metric_type', $type);
+        }
+
+        // Aggregasi berdasarkan range
+        if ($minutes <= 180) {
+            // <= 3 jam: data per menit (raw)
+            $data = $query->orderBy('recorded_at')
+                ->get()
+                ->map(fn($m) => [
+                    'metric_type'   => $m->metric_type,
+                    'metric_label'  => $m->metric_label,
+                    'value_percent' => round($m->value_percent, 2),
+                    'value_used'    => $m->value_used,
+                    'value_total'   => $m->value_total,
+                    'recorded_at'   => $m->recorded_at->format('Y-m-d H:i:s'),
+                    'time_label'    => $m->recorded_at->format('H:i'),
+                ]);
+        } elseif ($minutes <= 10080) {
+            // <= 7 hari: rata-rata per jam
+            $data = $query->select(
+                    'metric_type',
+                    'metric_label',
+                    DB::raw("DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00:00') as recorded_at"),
+                    DB::raw('ROUND(AVG(value_percent), 2) as value_percent'),
+                    DB::raw('ROUND(AVG(value_used)) as value_used'),
+                    DB::raw('MAX(value_total) as value_total')
+                )
+                ->groupBy('metric_type', 'metric_label', DB::raw("DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00:00')"))
+                ->orderBy('recorded_at')
+                ->get()
+                ->map(fn($m) => [
+                    'metric_type'   => $m->metric_type,
+                    'metric_label'  => $m->metric_label,
+                    'value_percent' => (float) $m->value_percent,
+                    'value_used'    => $m->value_used ? (int) $m->value_used : null,
+                    'value_total'   => $m->value_total ? (int) $m->value_total : null,
+                    'recorded_at'   => $m->recorded_at,
+                    'time_label'    => \Carbon\Carbon::parse($m->recorded_at)->format('d/m H:i'),
+                ]);
+        } else {
+            // > 7 hari: rata-rata per hari
+            $data = $query->select(
+                    'metric_type',
+                    'metric_label',
+                    DB::raw("DATE_FORMAT(recorded_at, '%Y-%m-%d 00:00:00') as recorded_at"),
+                    DB::raw('ROUND(AVG(value_percent), 2) as value_percent'),
+                    DB::raw('ROUND(AVG(value_used)) as value_used'),
+                    DB::raw('MAX(value_total) as value_total')
+                )
+                ->groupBy('metric_type', 'metric_label', DB::raw("DATE_FORMAT(recorded_at, '%Y-%m-%d 00:00:00')"))
+                ->orderBy('recorded_at')
+                ->get()
+                ->map(fn($m) => [
+                    'metric_type'   => $m->metric_type,
+                    'metric_label'  => $m->metric_label,
+                    'value_percent' => (float) $m->value_percent,
+                    'value_used'    => $m->value_used ? (int) $m->value_used : null,
+                    'value_total'   => $m->value_total ? (int) $m->value_total : null,
+                    'recorded_at'   => $m->recorded_at,
+                    'time_label'    => \Carbon\Carbon::parse($m->recorded_at)->format('d/m'),
+                ]);
+        }
+
+        // Group by metric_type for chart-ready format
+        $grouped = $data->groupBy('metric_type');
+
+        $charts = [];
+        foreach ($grouped as $metricType => $items) {
+            $charts[$metricType] = [
+                'labels'  => $items->pluck('time_label')->values(),
+                'data'    => $items->pluck('value_percent')->values(),
+                'records' => $items->values(),
+            ];
+        }
+
+        return response()->json([
+            'device_id' => $device->device_id,
+            'range'     => $range,
+            'type'      => $type,
+            'charts'    => $charts,
+            'total_records' => $data->count(),
         ]);
     }
 }

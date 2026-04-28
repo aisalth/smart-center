@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { NotificationProvider } from './components/NotificationProvider';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Aizar from './pages/Aizar';
@@ -25,6 +26,7 @@ function NotFound() {
 export default function App() {
   return (
     <BrowserRouter>
+      <NotificationProvider>
       <div className="app-layout">
         <Sidebar />
         <div className="main-content">
@@ -40,6 +42,7 @@ export default function App() {
           </Routes>
         </div>
       </div>
+      </NotificationProvider>
     </BrowserRouter>
   );
 }

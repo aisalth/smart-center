@@ -4,9 +4,32 @@ use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Api\DeviceApiController;
 use App\Http\Controllers\Api\MetricApiController;
 use App\Http\Controllers\Api\SnmpApiController;
+use App\Http\Controllers\Api\DockerMonitoringController;
+use App\Http\Controllers\Api\SmartPayController;
 use Illuminate\Http\Request;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\AnalyticsController;
+
+// SmartPay / SSO / Traffic dummy API
+Route::prefix('smartpay')->group(function () {
+    Route::get('/sso/dashboard',    [SmartPayController::class, 'ssoDashboard']);
+    Route::get('/sso/weekly',       [SmartPayController::class, 'ssoWeekly']);
+    Route::get('/sso/live',         [SmartPayController::class, 'ssoLiveAuth']);
+    Route::get('/traffic/dashboard',[SmartPayController::class, 'trafficDashboard']);
+    Route::get('/traffic/hourly',   [SmartPayController::class, 'trafficHourly']);
+    Route::get('/traffic/live',     [SmartPayController::class, 'trafficLive']);
+    Route::get('/payment/dashboard',[SmartPayController::class, 'paymentDashboard']);
+    Route::get('/payment/live',     [SmartPayController::class, 'paymentLive']);
+    Route::get('/security/alerts',  [SmartPayController::class, 'securityAlerts']);
+});
+
+// Docker monitoring routes
+Route::prefix('docker')->group(function () {
+    Route::get('/hosts',                              [DockerMonitoringController::class, 'getHosts']);
+    Route::get('/hosts/{id}',                         [DockerMonitoringController::class, 'getHostDetail']);
+    Route::get('/hosts/{id}/containers',              [DockerMonitoringController::class, 'getContainers']);
+    Route::get('/hosts/{id}/containers/{cid}/metrics', [DockerMonitoringController::class, 'getContainerMetrics']);
+});
 
 Route::get('/monitoring/container-history/{name}', function (Request $request, $name) {
     $container = DB::table('docker_containers')->where('name', 'LIKE', '%' . $name . '%')->first();
@@ -65,6 +88,7 @@ Route::prefix('devices')->group(function () {
     Route::get('/{device}/ports',           [MetricApiController::class, 'ports']);
     Route::get('/{device}/alerts',          [MetricApiController::class, 'alerts']);
     Route::get('/{device}/summary',         [MetricApiController::class, 'summary']);
+    Route::get('/{device}/metrics-history', [MetricApiController::class, 'metricsHistory']);
 });
 
 // Port traffic
