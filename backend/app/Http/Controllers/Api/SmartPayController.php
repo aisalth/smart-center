@@ -24,17 +24,15 @@ class SmartPayController extends Controller
     ];
 
     private array $wisataPages = [
-        '/beranda','/destinasi/pantai-kuta','/destinasi/tanah-lot','/destinasi/ubud',
-        '/destinasi/nusa-penida','/destinasi/gunung-bromo','/destinasi/raja-ampat',
-        '/destinasi/borobudur','/destinasi/labuan-bajo','/booking/hotel','/booking/tiket',
-        '/kuliner/nusantara','/event/festival','/galeri','/kontak','/promo/paket-liburan',
-        '/blog/tips-wisata','/blog/hidden-gems','/faq','/tentang-kami',
+        '/tiket','/wisata','/berita','/pengumuman','/pelayanan',
+        '/events','/statistik-purbalingga','/building-categories',
+        '/building-groups','/kecamatan','/cctv',
     ];
 
     private array $browsers = ['Chrome 124','Safari 17','Firefox 126','Edge 124','Chrome Mobile 124','Safari Mobile 17','Samsung Internet 24'];
-    private array $referrers = ['Google Search','Direct','Instagram','Facebook','TikTok','Twitter/X','YouTube','Google Maps','TripAdvisor','Traveloka'];
+    private array $referrers = ['Google Search','Direct','Instagram','Facebook','purbalinggakab.go.id','smartcenter.purbalingga','Google Maps','WhatsApp Share'];
     private array $devices = ['Desktop','Mobile','Tablet'];
-    private array $regions = ['Jakarta','Surabaya','Bandung','Denpasar','Yogyakarta','Medan','Makassar','Semarang','Malang','Palembang','Pontianak','Manado'];
+    private array $regions = ['Purbalingga','Purwokerto','Banjarnegara','Cilacap','Kebumen','Semarang','Yogyakarta','Jakarta','Surabaya','Bandung'];
 
     private function randIP(): string
     {
@@ -150,16 +148,24 @@ class SmartPayController extends Controller
     {
         $hour = (int) date('H');
         $visitorBase = $hour * rand(80, 150);
+        $totalReqs = $visitorBase + rand(500, 2000);
+        $slowReqs = rand(5, (int)($totalReqs * 0.15));
+        $errorReqs = rand(2, (int)($totalReqs * 0.05));
 
         return response()->json([
             'success' => true,
             'data' => [
-                'visitors_today' => $visitorBase + rand(500, 2000),
-                'pageviews_today' => ($visitorBase + rand(500, 2000)) * rand(3, 6),
+                'visitors_today' => $totalReqs,
+                'pageviews_today' => $totalReqs * rand(3, 6),
                 'avg_session_duration' => rand(120, 360),
                 'bounce_rate' => round(rand(250, 450) / 10, 1),
+                'avg_response_time_ms' => rand(50, 400),
+                'slow_requests' => $slowReqs,
+                'slow_request_pct' => round(($slowReqs / max($totalReqs, 1)) * 100, 1),
+                'error_requests' => $errorReqs,
+                'error_rate_pct' => round(($errorReqs / max($totalReqs, 1)) * 100, 1),
                 'top_pages' => array_map(fn($p) => ['page' => $p, 'views' => rand(50, 800)],
-                    array_slice($this->wisataPages, 0, 8)),
+                    $this->wisataPages),
                 'top_referrers' => array_map(fn($r) => ['source' => $r, 'visits' => rand(30, 500)],
                     array_slice($this->referrers, 0, 6)),
                 'device_breakdown' => [
@@ -201,6 +207,9 @@ class SmartPayController extends Controller
 
         for ($i = 0; $i < $count; $i++) {
             $secondsAgo = $i * rand(2, 10);
+            // Occasional slow response (>1s) to simulate real traffic spikes
+            $isSlow = rand(0, 100) > 85;
+            $isError = rand(0, 100) > 92;
             $feed[] = [
                 'id' => 'REQ' . rand(100000, 999999),
                 'timestamp' => now()->subSeconds($secondsAgo)->toIso8601ZuluString(),
@@ -208,12 +217,12 @@ class SmartPayController extends Controller
                 'ip' => $this->randIP(),
                 'page' => $this->pick($this->wisataPages),
                 'method' => $this->pick(['GET', 'GET', 'GET', 'POST']),
-                'status_code' => $this->pick([200, 200, 200, 200, 200, 301, 304, 404]),
+                'status_code' => $isError ? $this->pick([500, 502, 503, 504]) : ($isSlow ? $this->pick([200, 200, 408]) : $this->pick([200, 200, 200, 301, 304])),
                 'browser' => $this->pick($this->browsers),
                 'device' => $this->pick($this->devices),
                 'region' => $this->pick($this->regions),
                 'referrer' => $this->pick($this->referrers),
-                'response_time_ms' => rand(15, 800),
+                'response_time_ms' => $isError ? rand(3000, 10000) : ($isSlow ? rand(1000, 5000) : rand(15, 600)),
                 'session_duration' => rand(5, 300),
             ];
         }
@@ -230,14 +239,17 @@ class SmartPayController extends Controller
     // ══════════════════════════════════════════════════
     public function paymentDashboard(): JsonResponse
     {
-        $hour = (int) date('H');
+        $trxCount = rand(2000, 8000);
+        $failedCount = rand(20, (int)($trxCount * 0.15));
+        $successRate = round((($trxCount - $failedCount) / max($trxCount, 1)) * 100, 1);
 
         return response()->json([
             'success' => true,
             'data' => [
                 'volume_today' => rand(800, 2500) * 1000000,
-                'trx_count_today' => rand(2000, 8000),
-                'success_rate' => round(rand(970, 998) / 10, 1),
+                'trx_count_today' => $trxCount,
+                'failed_count_today' => $failedCount,
+                'success_rate' => $successRate,
                 'active_users' => rand(2000, 6000),
                 'avg_trx_value' => rand(35, 150) * 1000,
                 'peak_tps' => rand(20, 80),
@@ -250,38 +262,51 @@ class SmartPayController extends Controller
     // ══════════════════════════════════════════════════
     public function paymentLive(): JsonResponse
     {
-        $types = [
-            ['type'=>'qris','name'=>'Bayar QRIS Merchant','range'=>[10000,300000]],
-            ['type'=>'p2p','name'=>'Transfer P2P','range'=>[25000,2000000]],
-            ['type'=>'topup','name'=>'Top Up Saldo','range'=>[50000,1000000]],
-            ['type'=>'bill','name'=>'Bayar Tagihan','range'=>[50000,800000]],
-            ['type'=>'hotel','name'=>'Booking Hotel','range'=>[200000,3000000]],
-            ['type'=>'tiket','name'=>'Beli Tiket Wisata','range'=>[25000,500000]],
+        $tickets = [
+            ['type'=>'wisata','name'=>'Tiket Owabong Waterpark','range'=>[25000,75000]],
+            ['type'=>'wisata','name'=>'Tiket Goa Lawa','range'=>[10000,25000]],
+            ['type'=>'wisata','name'=>'Tiket Taman Aquatica','range'=>[15000,50000]],
+            ['type'=>'wisata','name'=>'Tiket Sanggaluri Park','range'=>[20000,60000]],
+            ['type'=>'wisata','name'=>'Tiket Pendakian Gunung Slamet','range'=>[15000,30000]],
+            ['type'=>'wisata','name'=>'Tiket Curug Cipendok','range'=>[10000,20000]],
+            ['type'=>'event','name'=>'Festival Batik Purbalingga 2026','range'=>[50000,150000]],
+            ['type'=>'event','name'=>'Konser Musik Alun-Alun','range'=>[25000,100000]],
+            ['type'=>'event','name'=>'Pameran UMKM Purbalingga','range'=>[10000,25000]],
+            ['type'=>'event','name'=>'Festival Kuliner Nusantara','range'=>[15000,50000]],
+            ['type'=>'wisata','name'=>'Tiket Desa Wisata Karangbanjar','range'=>[10000,35000]],
+            ['type'=>'wisata','name'=>'Tiket Buper Munjul Luhur','range'=>[15000,40000]],
         ];
+
+        $methods = ['QRIS', 'VA BCA', 'VA BNI', 'VA Mandiri', 'GoPay', 'OVO', 'Dana'];
 
         $feed = [];
         $count = rand(5, 12);
 
         for ($i = 0; $i < $count; $i++) {
-            $t = $this->pick($types);
+            $t = $this->pick($tickets);
             $secondsAgo = $i * rand(3, 12);
+            $qty = rand(1, 5);
+            $unitPrice = round(rand($t['range'][0], $t['range'][1]) / 1000) * 1000;
+            $amount = $unitPrice * $qty;
             $statusRand = rand(0, 100);
             $status = $statusRand > 88 ? 'failed' : ($statusRand > 75 ? 'pending' : 'success');
 
             $feed[] = [
-                'trx_id' => 'TRX' . date('ymd') . str_pad(rand(1, 99999), 5, '0', STR_PAD_LEFT),
+                'trx_id' => 'TKT' . date('ymd') . str_pad(rand(1, 99999), 5, '0', STR_PAD_LEFT),
                 'timestamp' => now()->subSeconds($secondsAgo)->toIso8601ZuluString(),
                 'time' => now()->subSeconds($secondsAgo)->format('H:i:s'),
                 'user' => $this->pick($this->users),
                 'ip' => $this->randIP(),
                 'type' => $t['type'],
                 'description' => $t['name'],
-                'amount' => round(rand($t['range'][0], $t['range'][1]) / 1000) * 1000,
+                'qty' => $qty,
+                'unit_price' => $unitPrice,
+                'amount' => $amount,
                 'fee' => rand(0, 2500),
                 'status' => $status,
-                'payment_method' => $this->pick(['wallet', 'wallet', 'va_bca', 'va_bni', 'va_mandiri', 'qris']),
+                'payment_method' => $this->pick($methods),
                 'failure_reason' => $status === 'failed' ? $this->pick([
-                    'insufficient_balance', 'timeout', 'merchant_error', 'network_error',
+                    'insufficient_balance', 'payment_timeout', 'bank_declined', 'network_error',
                 ]) : null,
             ];
         }

@@ -124,9 +124,9 @@ export default function MainServer() {
         {/* ══ SUMMARY CARDS ══ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
           {[
-            { label: 'Total Device', value: snmpMeta.total, color: '#3b82f6', icon: '🖥️' },
-            { label: 'Online', value: snmpMeta.online, color: '#22c55e', icon: '🟢' },
-            { label: 'Offline', value: snmpMeta.offline, color: '#ef4444', icon: '🔴' },
+            { label: 'Total Device', value: snmpMeta.total, color: '#3b82f6', icon: '' },
+            { label: 'Online', value: snmpMeta.online, color: '#22c55e', icon: '' },
+            { label: 'Offline', value: snmpMeta.offline, color: '#ef4444', icon: '' },
           ].map((card, i) => (
             <div key={i} style={{
               background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12,

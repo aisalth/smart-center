@@ -63,34 +63,62 @@ export default function SmartPayDashboard() {
     setLoading(false);
   }, []);
 
-  // Live feeds refresh + notifications (toast hanya critical)
+  // Live feeds refresh + smart alerts based on averages
   const refreshLive = useCallback(async () => {
     try {
-      const [auth, traf, trx, sso, pay] = await Promise.all([
+      const [auth, traf, trx, sso, pay, tDash] = await Promise.all([
         get('/sso/live'), get('/traffic/live'), get('/payment/live'),
-        get('/sso/dashboard'), get('/payment/dashboard'),
+        get('/sso/dashboard'), get('/payment/dashboard'), get('/traffic/dashboard'),
       ]);
 
-      // Log failed logins (no toast)
-      const failedLogins = (auth.data||[]).filter(a => a.status==='failed');
-      if (failedLogins.length >= 2) {
-        addNotif('warning', 'SSO Login Gagal', `${failedLogins.length} login gagal dalam batch terakhir`);
+      const authData = auth.data || [];
+      const trxData = trx.data || [];
+      const trafData = traf.data || [];
+
+      // ── 1. SSO: rata-rata login gagal > 20% → alert
+      const totalAuth = authData.length;
+      const failedAuth = authData.filter(a => a.status==='failed').length;
+      const failRate = totalAuth > 0 ? (failedAuth / totalAuth * 100) : 0;
+      if (failRate >= 20 && totalAuth >= 3) {
+        addNotif('critical', 'SSO Failure Rate Tinggi', `${failRate.toFixed(0)}% autentikasi gagal (${failedAuth}/${totalAuth}) — kemungkinan serangan brute force`, true);
+      } else if (failRate >= 10 && totalAuth >= 3) {
+        addNotif('warning', 'SSO Failure Rate Meningkat', `${failRate.toFixed(0)}% autentikasi gagal (${failedAuth}/${totalAuth})`);
       }
 
-      // Log failed transactions (no toast)
-      const failedTrx = (trx.data||[]).filter(t => t.status==='failed');
-      failedTrx.forEach(t => {
-        addNotif('error', 'Transaksi Gagal', `${t.description} — ${t.user?.name} (${t.failure_reason || 'error'})`);
-      });
-
-      // CRITICAL: low success rate → toast + log
-      if (pay.data?.success_rate && pay.data.success_rate < 97) {
-        addNotif('critical', 'Success Rate Kritis!', `Payment success rate: ${pay.data.success_rate}% — di bawah threshold 97%`, true);
+      // ── 2. Payment: transaksi gagal > 15% → critical
+      const payData = pay.data || {};
+      if (payData.success_rate && payData.success_rate < 85) {
+        addNotif('critical', 'Transaksi Gagal Massal!', `Success rate hanya ${payData.success_rate}% — ${payData.failed_count_today || 0} transaksi gagal hari ini`, true);
+      } else if (payData.success_rate && payData.success_rate < 95) {
+        addNotif('warning', 'Transaksi Gagal Meningkat', `Success rate ${payData.success_rate}% — ${payData.failed_count_today || 0} gagal dari ${payData.trx_count_today || 0} transaksi`);
       }
 
-      setLiveAuth(prev => [...(auth.data||[]), ...prev].slice(0,30));
-      setLiveTraffic(prev => [...(traf.data||[]), ...prev].slice(0,35));
-      setLiveTrx(prev => [...(trx.data||[]), ...prev].slice(0,20));
+      // ── 3. Website: response time lambat + error rate tinggi
+      const td = tDash.data || {};
+      if (td.avg_response_time_ms && td.avg_response_time_ms > 300) {
+        addNotif('warning', 'Website Lambat', `Avg response time ${td.avg_response_time_ms}ms — ${td.slow_requests || 0} request lambat (${td.slow_request_pct || 0}%)`);
+      }
+      if (td.error_rate_pct && td.error_rate_pct > 3) {
+        addNotif('critical', 'Error Rate Website Tinggi', `${td.error_rate_pct}% request menghasilkan error (${td.error_requests || 0} errors) — cek server segera`, true);
+      }
+
+      // ── 4. Traffic: cek request dengan response > 3000ms (sangat lambat)
+      const verySlowReqs = trafData.filter(t => t.response_time_ms > 3000);
+      if (verySlowReqs.length >= 2) {
+        const pages = [...new Set(verySlowReqs.map(r => r.page))].join(', ');
+        addNotif('critical', 'Server Overload Terdeteksi', `${verySlowReqs.length} request > 3 detik pada: ${pages}`, true);
+      }
+
+      // ── 5. Traffic: cek 5xx errors
+      const serverErrors = trafData.filter(t => t.status_code >= 500);
+      if (serverErrors.length >= 2) {
+        const pages = [...new Set(serverErrors.map(r => r.page))].join(', ');
+        addNotif('critical', 'Server Error (5xx)', `${serverErrors.length} server error terdeteksi pada: ${pages}`, true);
+      }
+
+      setLiveAuth(prev => [...authData, ...prev].slice(0,30));
+      setLiveTraffic(prev => [...trafData, ...prev].slice(0,35));
+      setLiveTrx(prev => [...trxData, ...prev].slice(0,20));
       setSsoStats(sso.data); setPayStats(pay.data);
     } catch(e) {
       console.error('Live refresh failed',e);
@@ -108,7 +136,6 @@ export default function SmartPayDashboard() {
         newAlerts.forEach(a => {
           if (!seenAlertIds.has(a.id)) {
             seenAlertIds.add(a.id);
-            // CRITICAL security → toast + log; error → log only
             const isCrit = a.severity === 'critical';
             addNotif(a.severity, `Security ${a.severity.toUpperCase()}`, `${a.description} — ${a.user?.name} (${a.ip})`, isCrit);
           }
@@ -155,7 +182,7 @@ export default function SmartPayDashboard() {
 
         {/* ══ ROW 2: SSO WEEKLY + TRAFFIC HOURLY CHARTS ══ */}
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, marginBottom:24 }}>
-          <Card title="📊 SSO Activity (7 Hari)" subtitle="Login & Register harian dari API">
+          <Card title="SSO Activity (7 Hari)" subtitle="Login & Register harian">
             <div style={{ height:260, marginTop:10 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={ssoWeekly} margin={{top:10,right:10,left:-20,bottom:0}}>
@@ -173,7 +200,7 @@ export default function SmartPayDashboard() {
             </div>
           </Card>
 
-          <Card title="🌐 Traffic Portal Pariwisata (24 Jam)" subtitle="Visitors & pageviews per jam dari API">
+          <Card title="Traffic Portal Pariwisata (24 Jam)" subtitle="Visitors & pageviews per jam">
             <div style={{ height:260, marginTop:10 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={hourlyTraffic} margin={{top:10,right:10,left:-20,bottom:0}}>
@@ -214,7 +241,7 @@ export default function SmartPayDashboard() {
         </div>
 
         {/* ══ ROW 4: LIVE SSO AUTH ══ */}
-        <Card title="🔐 Live SSO Authentication" subtitle="Data real-time dari API /sso/live" rightElement={<Badge variant="success">SSO Active</Badge>} style={{marginBottom:24}}>
+        <Card title="Live SSO Authentication" rightElement={<Badge variant="success">SSO Active</Badge>} style={{marginBottom:24}}>
           <div style={{ maxHeight:300, overflowY:'auto', marginTop:10 }}>
             <table style={{ width:'100%', borderCollapse:'collapse', minWidth:800 }}>
               <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>
@@ -245,7 +272,7 @@ export default function SmartPayDashboard() {
         </Card>
 
         {/* ══ ROW 5: LIVE WEBSITE TRAFFIC ══ */}
-        <Card title="🌍 Live Website Traffic — Portal Pariwisata" subtitle="Data real-time dari API /traffic/live" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'block',animation:'pulse-ring 1s infinite'}}/>} style={{marginBottom:24}}>
+        <Card title="Live Website Traffic — Portal Pariwisata"  rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'block',animation:'pulse-ring 1s infinite'}}/>} style={{marginBottom:24}}>
           <div style={{ maxHeight:300, overflowY:'auto', marginTop:10 }}>
             <table style={{ width:'100%', borderCollapse:'collapse', minWidth:900 }}>
               <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>
@@ -276,13 +303,13 @@ export default function SmartPayDashboard() {
           </div>
         </Card>
 
-        {/* ══ ROW 6: LIVE TRANSACTIONS ══ */}
-        <Card title="💳 Live Transactions" subtitle="Data real-time dari API /payment/live" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'block',animation:'pulse-ring 1s infinite'}}/>} style={{marginBottom:24}}>
+        {/* ══ ROW 6: LIVE PEMBELIAN TIKET ══ */}
+        <Card title="Live Pembelian Tiket" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#10b981',display:'block',animation:'pulse-ring 1s infinite'}}/>} style={{marginBottom:24}}>
           <div style={{ maxHeight:300, overflowY:'auto', marginTop:10 }}>
-            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:800 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:900 }}>
               <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>
                 <tr style={{ borderBottom:'1px solid var(--card-border)', textAlign:'left' }}>
-                  {['WAKTU','TRX ID','IP','USER','TIPE','NOMINAL','METHOD','STATUS'].map(h => <th key={h} style={tblHead}>{h}</th>)}
+                  {['WAKTU','TRX ID','PEMBELI','TIKET','TIPE','QTY','HARGA','TOTAL','METODE','STATUS'].map(h => <th key={h} style={tblHead}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -290,9 +317,16 @@ export default function SmartPayDashboard() {
                   <tr key={tx.trx_id+i} style={{ borderBottom:'1px solid #f1f5f9' }}>
                     <td style={{...tblCell,color:'#64748b',...mono}}>{tx.time}</td>
                     <td style={{...tblCell,...mono,fontSize:11,color:'#94a3b8'}}>{tx.trx_id}</td>
-                    <td style={{...tblCell,...mono,fontSize:11,color:'#94a3b8'}}>{tx.ip}</td>
-                    <td style={{...tblCell,fontWeight:600,color:'#334155'}}>{tx.user?.name}</td>
-                    <td style={{...tblCell,color:'#475569',fontSize:12}}>{tx.description}</td>
+                    <td style={{...tblCell,fontWeight:600,color:'#334155',fontSize:12}}>{tx.user?.name}</td>
+                    <td style={{...tblCell,fontWeight:600,color:'#10b981',fontSize:12}}>{tx.description}</td>
+                    <td style={tblCell}>
+                      <span style={{fontSize:10,fontWeight:700,padding:'2px 6px',borderRadius:4,
+                        background:tx.type==='event'?'rgba(139,92,246,.1)':'rgba(59,130,246,.1)',
+                        color:tx.type==='event'?'#8b5cf6':'#3b82f6'
+                      }}>{tx.type==='event'?'EVENT':'WISATA'}</span>
+                    </td>
+                    <td style={{...tblCell,textAlign:'center',...mono,fontWeight:600}}>{tx.qty || 1}x</td>
+                    <td style={{...tblCell,color:'#64748b',fontSize:11,...mono}}>{formatRp(tx.unit_price || tx.amount)}</td>
                     <td style={{...tblCell,fontWeight:700,color:'#334155',textAlign:'right'}}>{formatRp(tx.amount)}</td>
                     <td style={{...tblCell,fontSize:11,color:'#64748b'}}>{tx.payment_method}</td>
                     <td style={{...tblCell,textAlign:'center'}}><StatusBadge status={tx.status}/></td>
@@ -304,7 +338,7 @@ export default function SmartPayDashboard() {
         </Card>
 
         {/* ══ ROW 7: SECURITY ALERTS ══ */}
-        <Card title="🛡️ Security & Fraud Monitor" subtitle="Data dari API /security/alerts" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#dc2626',display:'inline-block',animation:'blink 1.5s infinite'}}/>}>
+        <Card title="Security & Fraud Monitor" rightElement={<span style={{width:8,height:8,borderRadius:'50%',background:'#dc2626',display:'inline-block',animation:'blink 1.5s infinite'}}/>}>
           <div style={{ maxHeight:260, overflowY:'auto', marginTop:10 }}>
             <table style={{ width:'100%', borderCollapse:'collapse', minWidth:700 }}>
               <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:10 }}>

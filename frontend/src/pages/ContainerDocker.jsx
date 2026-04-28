@@ -39,9 +39,9 @@ export default function ContainerDocker() {
         {/* ══ SUMMARY CARDS ══ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
           {[
-            { label: 'Total Server', value: meta.total, color: '#8b5cf6', icon: '🐳' },
-            { label: 'Online', value: meta.online, color: '#22c55e', icon: '🟢' },
-            { label: 'Offline', value: meta.offline, color: '#ef4444', icon: '🔴' },
+            { label: 'Total Server', value: meta.total, color: '#8b5cf6', icon: '' },
+            { label: 'Online', value: meta.online, color: '#22c55e', icon: '' },
+            { label: 'Offline', value: meta.offline, color: '#ef4444', icon: '' },
           ].map((card, i) => (
             <div key={i} style={{
               background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12,

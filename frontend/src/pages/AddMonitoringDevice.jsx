@@ -104,25 +104,6 @@ export default function AddDevice() {
 
         <Card title="Device Configuration" subtitle="Isi informasi SNMP untuk menambahkan device baru" style={{ maxWidth: 700 }}>
 
-          {/* Info banner */}
-          <div style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', color: '#3b82f6', padding: '12px 16px', borderRadius: 8, fontSize: 12, fontWeight: 500, marginBottom: 24 }}>
-            💡 Setelah device ditambahkan, sistem akan otomatis melakukan polling SNMP pertama untuk mengambil data CPU, Memory, Disk, dan Network.
-          </div>
-
-          {/* Error */}
-          {submitError && (
-            <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20, fontWeight: 600 }}>
-              ⚠ {submitError}
-            </div>
-          )}
-
-          {/* Success */}
-          {submitSuccess && (
-            <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20, fontWeight: 600 }}>
-              {submitSuccess}
-            </div>
-          )}
-
           <form onSubmit={handleSubmit}>
 
             {/* Hostname & IP */}
@@ -185,18 +166,6 @@ export default function AddDevice() {
               </div>
             </div>
 
-            {/* Contoh Device */}
-            <div style={{ background: 'var(--background)', borderRadius: 8, padding: '14px 18px', marginBottom: 30, border: '1px dashed var(--card-border)' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>📋 Contoh pengisian (device yang sudah ada):</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 20px', fontSize: 12 }}>
-                <div><span style={{ color: 'var(--text-muted)' }}>Hostname:</span> <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>vps-testing</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>IP:</span> <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>127.0.0.1</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>Community:</span> <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>public</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>SNMP Ver:</span> <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>v2c</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>Port:</span> <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>161</span></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>Transport:</span> <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>udp</span></div>
-              </div>
-            </div>
 
             {/* Submit */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 20, borderTop: '1px solid var(--card-border)' }}>
@@ -213,11 +182,7 @@ export default function AddDevice() {
                 onMouseEnter={e => { if (!isSubmitting) e.currentTarget.style.background = '#16a34a'; }}
                 onMouseLeave={e => { if (!isSubmitting) e.currentTarget.style.background = '#22c55e'; }}
               >
-                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                  <polyline points="7 3 7 8 15 8"></polyline>
-                </svg>
+                
                 {isSubmitting ? 'Menyimpan & Polling...' : 'Simpan & Poll SNMP'}
               </button>
             </div>

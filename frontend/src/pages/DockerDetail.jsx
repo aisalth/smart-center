@@ -7,6 +7,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { getContainerHistory } from '../api/zakiApi';
 import { formatUptime } from '../api/snmpApi';
 import { useNotif } from '../components/NotificationProvider';
+import { FaServer, FaCircle } from 'react-icons/fa';
 
 const BASE_URL = 'http://127.0.0.1:8000/api';
 
@@ -162,20 +163,31 @@ export default function DockerDetail() {
         {/* ══ HOST INFO CARDS ══ */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
           {/* Server Info */}
-          <Card title="🖥️ Server Info" style={{ height: '100%' }}>
+          <Card title="Server Info" style={{ height: '100%' }}>
             <div style={{ marginTop: 8 }}>
-              <InfoRow label="Hostname" value={device.hostname} mono />
-              <InfoRow label="IP Address" value={device.ip} mono />
+              <InfoRow label="Hostname"         value={device.hostname} mono />
+              <InfoRow label="IP Address"       value={device.ip} mono />
               <InfoRow label="Operating System" value={device.os} />
-              <InfoRow label="Hardware (CPU)" value={device.hardware} />
-              <InfoRow label="Uptime" value={formatUptime(device.uptime)} mono />
-              <InfoRow label="Status" value={device.status ? '🟢 Online' : '🔴 Offline'} />
-              <InfoRow label="Last Polled" value={device.last_polled ? new Date(device.last_polled).toLocaleString('id-ID') : '—'} />
+              <InfoRow label="Hardware (CPU)"   value={device.hardware} />
+              <InfoRow label="Uptime"           value={formatUptime(device.uptime)} mono />
+              <InfoRow
+                label="Status"
+                value={
+                  <span style={{ display:'flex', alignItems:'center', gap:5 }}>
+                    <FaCircle size={10} color={device.status ? '#22c55e' : '#ef4444'} />
+                    {device.status ? 'Online' : 'Offline'}
+                  </span>
+                }
+              />
+              <InfoRow
+                label="Last Polled"
+                value={device.last_polled ? new Date(device.last_polled).toLocaleString('id-ID') : '—'}
+              />
             </div>
           </Card>
 
           {/* Docker Info */}
-          <Card title="🐳 Docker Engine" style={{ height: '100%' }}>
+          <Card title="Docker Engine" style={{ height: '100%' }}>
             <div style={{ marginTop: 8 }}>
               <InfoRow label="Docker Host Name" value={hostInfo?.name} />
               <InfoRow label="Connection Type" value={hostInfo?.connection_type || 'socket'} mono />
@@ -191,10 +203,10 @@ export default function DockerDetail() {
         {/* ══ SUMMARY STATS ══ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
           {[
-            { label: 'Total Container', value: containers.length, color: '#3b82f6', icon: '📦' },
-            { label: 'Running', value: runningCount, color: '#22c55e', icon: '🟢' },
-            { label: 'Stopped', value: containers.length - runningCount, color: '#ef4444', icon: '🔴' },
-            { label: 'Engine', value: device.status ? 'Online' : 'Offline', color: device.status ? '#22c55e' : '#ef4444', icon: '🐳' },
+            { label: 'Total Container', value: containers.length, color: '#3b82f6', icon: '' },
+            { label: 'Running', value: runningCount, color: '#22c55e', icon: '' },
+            { label: 'Stopped', value: containers.length - runningCount, color: '#ef4444', icon: '' },
+            { label: 'Engine', value: device.status ? 'Online' : 'Offline', color: device.status ? '#22c55e' : '#ef4444', icon: '' },
           ].map((card, i) => (
             <div key={i} style={{
               background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12,
